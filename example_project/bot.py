@@ -42,3 +42,17 @@ def get_summary_old_model(text):
         messages=[{"role": "user", "content": text}],
     )
     return response.content[0].text
+
+
+# This is the pattern that v1/regular kwargs matching couldn't see: the
+# params are built as a dict elsewhere, then splatted into the call.
+request_params = {
+    "model": "claude-opus-5-20260501",
+    "max_tokens": 800,
+    "temperature": 0.5,  # <- same rejected param, just harder to see
+}
+
+
+def get_quick_take(prompt):
+    response = client.messages.create(**request_params, messages=[{"role": "user", "content": prompt}])
+    return response.content[0].text

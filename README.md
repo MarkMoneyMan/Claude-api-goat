@@ -47,9 +47,21 @@ found). Plus the 6 public repos above for false-positive testing.
 
 ## Next steps, roughly in priority order
 
-1. Handle `**kwargs`-style calls (would unlock testing against litellm's
-   own Anthropic provider code, and tools like aider that route through it).
+1. ~~Handle `**kwargs`-style calls~~ — **done.** Built and validated
+   (`example_project/bot.py` has a synthetic test case for it), but it
+   changed **zero** findings across the 6 real repos. Turned out litellm
+   doesn't call the official `anthropic` SDK at all in its own Anthropic
+   integration — it reimplements the API at the HTTP level
+   (`litellm/llms/anthropic/...`), so there was never an SDK call site
+   there to find. Same root cause explains aider's 0 findings: it talks
+   to Claude through litellm, never through `anthropic.Anthropic()`
+   directly. Correcting the earlier claim that kwargs-handling would
+   "unlock" either of them — it doesn't; that's a structurally different,
+   bigger problem (would need to understand each abstraction layer's own
+   API, not just the official SDK's).
 2. Multi-language support (start with JS/TS via a tree-sitter parser).
 3. Automate `extract_rules.py` on a schedule instead of running by hand.
+   **Needs an ANTHROPIC_API_KEY to actually run — first real (small) cost
+   in this project so far.**
 4. Auto-fix: generate the actual code patch and open a PR, once detection
    has been trusted on more real-world code than just one project.

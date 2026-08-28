@@ -52,9 +52,50 @@ def get_call_chain_name(node):
     return ".".join(reversed(parts))
 
 
-def get_kwargs(call_node):
-    """Return {kwarg_name: ast_node} for keyword arguments with a literal name."""
-    return {kw.arg: kw.value for kw in call_node.keywords if kw.arg is not None}
+def _dict_literal_to_map(dict_node):
+    """Turn an ast.Dict literal into {literal_str_key: value_node}, skipping
+    any key that isn't a plain string literal (e.g. a computed key)."""
+    out = {}
+    for k, v in zip(dict_node.keys, dict_node.values):
+        key = literal_str(k)
+        if key is not None:
+            out[key] = v
+    return out
+
+
+def build_var_dict_index(tree):
+    """Module-wide index of {var_name: dict_of_literal_kwargs} for every
+    top-level-ish assignment `var_name = {...}` where the RHS is a dict
+    literal. Deliberately simple (no scoping, no control flow, last
+    assignment wins) — good enough to catch the common
+    `kwargs = {...}; client.messages.create(**kwargs)` pattern without
+    pretending to be a real data-flow analysis."""
+    index = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    index[target.id] = _dict_literal_to_map(node.value)
+    return index
+
+
+def get_kwargs(call_node, var_dict_index=None):
+    """Return {kwarg_name: ast_node} for a call's keyword arguments.
+
+    Handles two shapes: direct keywords (`model="x"`) and a single
+    `**some_dict` splat where `some_dict` was assigned a literal dict
+    earlier in the file (`kwargs = {"model": "x"}; f(**kwargs)`) — the
+    latter is a heuristic (see build_var_dict_index), not a guarantee.
+    """
+    kwargs = {kw.arg: kw.value for kw in call_node.keywords if kw.arg is not None}
+    if var_dict_index:
+        for kw in call_node.keywords:
+            if kw.arg is None and isinstance(kw.value, ast.Name):
+                resolved = var_dict_index.get(kw.value.id)
+                if resolved:
+                    # Direct keywords win over a splatted dict, matching Python's own rule.
+                    kwargs = {**resolved, **kwargs}
+    return kwargs
 
 
 def extract_messages_prefill(messages_node):
@@ -89,9 +130,11 @@ def scan_source(path, text):
     except SyntaxError:
         return findings  # not valid Python (or Python 2, or a template) — skip quietly
 
+    var_dict_index = build_var_dict_index(tree)
+
     # --- Messages API calls: messages.create(...) ---
     for call, chain in find_calls(tree, ["messages.create"]):
-        kwargs = get_kwargs(call)
+        kwargs = get_kwargs(call, var_dict_index)
         model = literal_str(kwargs.get("model")) if "model" in kwargs else None
 
         # sdk-v1-sampling-params-removed
@@ -180,7 +223,7 @@ def scan_source(path, text):
         # names (gpt-4, gpt-instruct). Only flag when the model literal looks
         # like a Claude model, or there's no model literal to check at all
         # (ambiguous — flagged at lower confidence rather than dropped).
-        kwargs = get_kwargs(call)
+        kwargs = get_kwargs(call, var_dict_index)
         model = literal_str(kwargs.get("model")) if "model" in kwargs else None
         if model and "claude" not in model.lower():
             continue
