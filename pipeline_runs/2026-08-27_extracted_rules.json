@@ -1,0 +1,148 @@
+[
+  {
+    "id": "beta-files-skills-sdk-shape-change",
+    "pattern": "client\\.beta\\.(files|skills)\\b",
+    "applies_if_model": null,
+    "severity": "HIGH",
+    "deadline": "2026-08-27",
+    "title": "client.beta.files and client.beta.skills no longer send beta headers and return new response shapes",
+    "detail": "In Python SDK 1.2.0, TypeScript SDK 0.122.0, Go SDK 1.68.0, Java SDK 2.59.0, Ruby SDK 1.67.0, and C# SDK 12.44.0, accessing files or skills through the beta namespace now behaves identically to the non-beta namespace \u2014 the old beta headers are not sent and the old beta response shapes are not returned. Additionally, `client.beta.skills.delete()` now deletes a Skill together with all of its versions, and the type `BetaSkill` is renamed to `BetaContainerSkill`.",
+    "fix": "Migrate your code to use `client.files` and `client.skills` directly, update any references to `BetaSkill` to `BetaContainerSkill`, and account for the new delete-all-versions behavior of `client.beta.skills.delete()`; see the linked migration guides for before-and-after details."
+  },
+  {
+    "id": "python-sdk-v1-httpx-to-httpx2",
+    "pattern": "import\\s+httpx(?!2)|from\\s+httpx(?!2)\\s+import|httpx\\.(Client|AsyncClient|Timeout|Proxy|Limits|Transport)",
+    "applies_if_model": null,
+    "severity": "HIGH",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 moves HTTP layer from httpx to httpx2; custom http_client objects must be rebuilt from httpx2",
+    "detail": "Python SDK v1.0 replaces the `httpx` dependency with `httpx2`. Any code that constructs custom `http_client`, `Timeout`, or transport objects using the `httpx` package must be updated to import from `httpx2` instead. Code that relies on tracing or mocking libraries that patch `httpx` must call `httpx2.alias_httpx()` at startup to preserve that behavior.",
+    "fix": "Replace `import httpx` with `import httpx2` (or use the alias helper) when building custom HTTP clients or transports passed to the Anthropic SDK, and call `httpx2.alias_httpx()` at startup if you use any library that monkey-patches `httpx`."
+  },
+  {
+    "id": "python-sdk-v1-text-completions-removed",
+    "pattern": "\\.(completions\\.create|Completion)\\b|text_completions|TextCompletion",
+    "applies_if_model": null,
+    "severity": "HIGH",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 removes the legacy Text Completions API surface",
+    "detail": "Python SDK v1.0 removes the long-deprecated Text Completions API. Any code that calls the legacy completions endpoint through the SDK will break after upgrading to v1.0.",
+    "fix": "Migrate all Text Completions calls to the Messages API before upgrading to Python SDK v1.0."
+  },
+  {
+    "id": "python-sdk-v1-messages-params-removed",
+    "pattern": "(\\.messages\\.(?:create|stream)|messages\\().*\\b(temperature|top_p|top_k)\\b",
+    "applies_if_model": null,
+    "severity": "HIGH",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 removes temperature, top_p, and top_k parameters from Messages methods",
+    "detail": "Python SDK v1.0 removes the `temperature`, `top_p`, and `top_k` parameters from Messages API methods, as these were long-deprecated on that surface. Passing these parameters after upgrading will cause an error.",
+    "fix": "Remove `temperature`, `top_p`, and `top_k` arguments from all Messages API calls in your codebase before upgrading to Python SDK v1.0."
+  },
+  {
+    "id": "python-sdk-v1-compaction-control-removed",
+    "pattern": "compaction_control",
+    "applies_if_model": null,
+    "severity": "MEDIUM",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 removes the tool runner's client-side compaction_control",
+    "detail": "Python SDK v1.0 removes the `compaction_control` option from the client-side tool runner. Code that passes this parameter will break after upgrading.",
+    "fix": "Remove any use of `compaction_control` from tool runner calls before upgrading to Python SDK v1.0."
+  },
+  {
+    "id": "python-sdk-v1-async-with-raw-response",
+    "pattern": "\\.with_raw_response\\b",
+    "applies_if_model": null,
+    "severity": "HIGH",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 async client: .with_raw_response results require await response.parse()",
+    "detail": "On the async client in Python SDK v1.0, results from `.with_raw_response` now require `await response.parse()` to extract the parsed object. Existing code that accesses the parsed result synchronously will silently misbehave or error.",
+    "fix": "Update all async `.with_raw_response` usages to call `await response.parse()` instead of accessing the result without awaiting."
+  },
+  {
+    "id": "python-sdk-v1-bedrock-no-default-region",
+    "pattern": "AnthropicBedrock\\s*\\(",
+    "applies_if_model": null,
+    "severity": "MEDIUM",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 AnthropicBedrock raises an error when no AWS region is configured",
+    "detail": "In Python SDK v1.0, `AnthropicBedrock` no longer silently defaults to `us-east-1` when no AWS region is configured; it now raises an error instead. Code that relies on the implicit default region will break.",
+    "fix": "Ensure an AWS region is explicitly configured (via environment variable or constructor argument) before constructing an `AnthropicBedrock` client."
+  },
+  {
+    "id": "python-sdk-v1-min-python-version",
+    "pattern": "python_requires|Programming Language :: Python :: 3\\.[0-9]",
+    "applies_if_model": null,
+    "severity": "MEDIUM",
+    "deadline": "2026-08-20",
+    "title": "Python SDK v1.0 requires Python 3.10 or later",
+    "detail": "Python SDK v1.0 drops support for Python versions below 3.10. Projects running on Python 3.8 or 3.9 cannot upgrade to v1.0 without also upgrading their Python runtime.",
+    "fix": "Upgrade your Python runtime to 3.10 or later before installing Python SDK v1.0."
+  },
+  {
+    "id": "opus-5-disable-thinking-xhigh-max-error",
+    "pattern": "thinking.*['\"]type['\"]:?\\s*['\"]disabled['\"]|['\"]disabled['\"]:.*thinking",
+    "applies_if_model": [
+      "opus-5"
+    ],
+    "severity": "HIGH",
+    "deadline": "2026-07-24",
+    "title": "On Claude Opus 5, disabling thinking with effort xhigh or max returns a 400 error",
+    "detail": "Claude Opus 5 does not allow `thinking: {\"type\": \"disabled\"}` when `effort` is set to `xhigh` or `max`; the API returns a 400 error. This is a breaking change from Claude Opus 4.8, which permitted disabling thinking at any effort level.",
+    "fix": "When targeting Claude Opus 5 with `xhigh` or `max` effort, remove the `thinking: {\"type\": \"disabled\"}` parameter or lower the effort level to `high` or below."
+  },
+  {
+    "id": "opus-4-7-fast-mode-removed",
+    "pattern": "(?:model.*claude-opus-4-7|claude-opus-4-7.*model).*speed.*fast|speed.*fast.*claude-opus-4-7",
+    "applies_if_model": [
+      "opus-4-7"
+    ],
+    "severity": "HIGH",
+    "deadline": "2026-07-24",
+    "title": "Fast mode removed for Claude Opus 4.7; requests with speed: fast now return an error",
+    "detail": "Requests to `claude-opus-4-7` that include `speed: \"fast\"` now return an error rather than falling back to standard speed. Fast mode is no longer available for this model at all.",
+    "fix": "Remove `speed: \"fast\"` from requests targeting `claude-opus-4-7`, or migrate to Claude Opus 5 or Claude Opus 4.8 if fast mode is required."
+  },
+  {
+    "id": "opus-4-1-retired",
+    "pattern": "claude-opus-4-1-20250805|claude-opus-4-1\\b",
+    "applies_if_model": [
+      "opus-4-1"
+    ],
+    "severity": "HIGH",
+    "deadline": "2026-08-05",
+    "title": "Claude Opus 4.1 retired; all API requests to this model now return an error",
+    "detail": "The `claude-opus-4-1-20250805` model has been retired. Any API request targeting this model identifier will return an error.",
+    "fix": "Update your model identifier from `claude-opus-4-1-20250805` to a current model such as `claude-opus-5`."
+  },
+  {
+    "id": "experimental-prompt-tools-retired",
+    "pattern": "/v1/experimental/(generate_prompt|improve_prompt|templatize_prompt)",
+    "applies_if_model": null,
+    "severity": "HIGH",
+    "deadline": "2026-08-17",
+    "title": "Experimental prompt generation/improvement/templatize endpoints retired on August 17, 2026",
+    "detail": "The endpoints `/v1/experimental/generate_prompt`, `/v1/experimental/improve_prompt`, and `/v1/experimental/templatize_prompt` are being retired alongside the legacy Workbench on August 17, 2026. After that date, requests to these endpoints will return an error.",
+    "fix": "Remove or replace any code that calls these experimental prompt-tool endpoints before August 17, 2026."
+  },
+  {
+    "id": "memory-list-managed-agents-header-behavior-change",
+    "pattern": "managed-agents-2026-04-01",
+    "applies_if_model": null,
+    "severity": "MEDIUM",
+    "deadline": "2026-07-22",
+    "title": "managed-agents-2026-04-01 header adopts new memory listing behavior on July 22, 2026",
+    "detail": "On July 22, 2026, the `managed-agents-2026-04-01` beta header on memory store list endpoints adopted the same changed behavior as `agent-memory-2026-07-22`: results in a stable server-defined order (ignoring `order_by`/`order`), `depth` restricted to `0`, `1`, or omitted, and `path_prefix` must end with `/` and matches whole path segments. Existing page cursors issued before adoption are not valid and require restarting from the first page.",
+    "fix": "Audit any code that calls memory list endpoints with `managed-agents-2026-04-01` and update `order_by`/`order` usage, `depth` values, and `path_prefix` patterns to conform to the new behavior, then restart pagination from page one."
+  },
+  {
+    "id": "computer-use-toolset-new-shape",
+    "pattern": "computer_20251124|computer_use.*beta|beta.*computer_use",
+    "applies_if_model": null,
+    "severity": "MEDIUM",
+    "deadline": "2026-08-19",
+    "title": "Upgrading to computer_toolset_20260801 changes request shape and tool handling vs. beta computer_20251124",
+    "detail": "The computer use tool is now out of beta as `computer_toolset_20260801`. Upgrading an existing integration from the earlier beta version (`computer_20251124`) changes the request shape and how tools are handled, including batch actions and zoom enabled by default.",
+    "fix": "Follow the migration guide at the `#migrate-from-computer_20251124` anchor before switching from the beta `computer_20251124` to the GA `computer_toolset_20260801` toolset."
+  }
+]

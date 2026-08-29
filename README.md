@@ -59,9 +59,37 @@ found). Plus the 6 public repos above for false-positive testing.
    "unlock" either of them — it doesn't; that's a structurally different,
    bigger problem (would need to understand each abstraction layer's own
    API, not just the official SDK's).
-2. Multi-language support (start with JS/TS via a tree-sitter parser).
-3. Automate `extract_rules.py` on a schedule instead of running by hand.
-   **Needs an ANTHROPIC_API_KEY to actually run — first real (small) cost
-   in this project so far.**
-4. Auto-fix: generate the actual code patch and open a PR, once detection
+2. ~~Automate `extract_rules.py`~~ — **ran for real on 2026-08-27**, first
+   real (small) cost in this project. Fed it Anthropic's actual release
+   notes (last ~8 weeks, `pipeline_runs/2026-08-27_changelog_input.txt`)
+   with a real `ANTHROPIC_API_KEY`. Result:
+   `pipeline_runs/2026-08-27_extracted_rules.json` — 14 rules extracted
+   automatically. It correctly found all 6 breaking changes that had been
+   hand-written into `rules.py` earlier (SDK v1.0 sampling params, legacy
+   Text Completions removal, Opus 5 xhigh/max thinking error, Opus 4.7
+   fast-mode removal, Opus 4.1 retirement, experimental prompt-tools
+   retirement) **plus 8 more that hand-extraction had missed**: an
+   httpx→httpx2 migration in SDK v1.0, `compaction_control` removal,
+   an async `.with_raw_response` behavior change, `AnthropicBedrock`'s
+   dropped default AWS region, the Python 3.10 floor, a `client.beta.files`
+   /`client.beta.skills` shape change, a Managed Agents header behavior
+   change, and a computer-use toolset shape change. One real bug found and
+   fixed running this live: the first version hardcoded `max_tokens=4096`,
+   which silently truncated the JSON output mid-string on a real-size
+   changelog batch and threw a parse error — fixed by raising the limit
+   and by making `extract()` raise a clear error on `stop_reason ==
+   "max_tokens"` instead of failing on a cryptic JSON error.
+
+   **Known gap, stated plainly:** these 14 auto-extracted rules use the
+   v1 `rules.py` schema (regex `pattern` field) that `scan.py` reads —
+   `ast_scan.py` (the good, low-noise v2 scanner) does **not** read
+   `rules.py` at all; every check in it is still hand-coded per rule
+   type. So automated extraction currently feeds the noisier scanner, not
+   the one actually worth trusting. Closing that gap — teaching
+   `ast_scan.py` to turn a generic extracted rule into an AST-level check
+   — is real, non-trivial work and is now the top priority below.
+3. Teach `ast_scan.py` to consume auto-extracted rules directly, instead
+   of only hand-coded checks (the gap found in step 2).
+4. Multi-language support (start with JS/TS via a tree-sitter parser).
+5. Auto-fix: generate the actual code patch and open a PR, once detection
    has been trusted on more real-world code than just one project.

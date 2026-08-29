@@ -54,12 +54,18 @@ def extract(changelog_text, model="claude-sonnet-4-6"):
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[
             {"role": "user", "content": EXTRACTION_PROMPT.format(changelog_text=changelog_text)}
         ],
     )
     raw = response.content[0].text
+    if response.stop_reason == "max_tokens":
+        raise ValueError(
+            "Model output was cut off at max_tokens before finishing the JSON array. "
+            "The changelog input is too large for one call — split it into smaller "
+            "chunks (e.g. one call per month) rather than raising max_tokens forever."
+        )
     # Expect a JSON array in the response; be lenient about surrounding prose.
     start, end = raw.find("["), raw.rfind("]")
     if start == -1 or end == -1:
