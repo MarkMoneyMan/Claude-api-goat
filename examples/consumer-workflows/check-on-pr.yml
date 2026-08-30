@@ -1,0 +1,29 @@
+# TEMPLATE — how a downstream project (e.g. OddsScanner) would use
+# claude-api-guard once it's published to a real GitHub remote.
+#
+# Copy this into that project's own .github/workflows/, then replace
+# YOUR-GITHUB-USERNAME/claude-api-guard@main below with the real published
+# location (this prototype only exists as a local git repo right now — see
+# the "Publishing" section in README.md before this line means anything).
+#
+# What it does: on every PR, flags Claude API usage that's broken or about
+# to break. Fails the check only on HIGH severity by default so a MEDIUM/LOW
+# heads-up doesn't block merging.
+
+name: claude-api-guard check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: YOUR-GITHUB-USERNAME/claude-api-guard@main
+        with:
+          path: .
+          fail-on: HIGH
+          # scan-js: "true"   # uncomment if this repo also has JS/TS Anthropic SDK usage

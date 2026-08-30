@@ -273,3 +273,55 @@ deprecated-model-string literal, etc. — see git history for the exact
 before/after JSON if you want to see the noise that got cut). Only tested
 against 2 real repos so far, not 6 like the Python side — this is
 explicitly a first pass, not yet hardened to the same degree.
+
+## CI / GitHub Action
+
+`action.yml` packages the Python (and optionally JS/TS) scanner as a
+composite GitHub Action, so a project can get checked on every PR instead
+of someone running `ast_scan.py` by hand and remembering to. Two pieces:
+
+- **`action.yml` + `action_combine.py`** — the action itself. Runs
+  `ast_scan.py` (and `js_scanner/ast_scan.js` if `scan-js: true`), merges
+  whatever findings files actually exist, and fails the job only at or
+  above a configurable `fail-on` severity (default `HIGH`) — a MEDIUM/LOW
+  heads-up shouldn't block a merge the way a HIGH one should.
+- **`.github/workflows/self-check.yml`** — dogfoods the action against
+  *this* repo on every push: one job asserts the severity gate correctly
+  **fails** against `example_project/` (which has known HIGH findings by
+  design), the other asserts it correctly **passes** against the tool's
+  own source (`rules.py` etc. — which doesn't itself call the Anthropic
+  API, so it should always be clean). Both are assertions about the
+  action's own correctness, not about this repo's code health.
+- **`examples/consumer-workflows/`** — two templates (`check-on-pr.yml`,
+  a weekly `autofix-weekly.yml` that opens a PR via the well-established
+  `peter-evans/create-pull-request` action when `autofix.py` finds
+  something to fix) showing how a *downstream* project would wire this
+  in. Marked `YOUR-GITHUB-USERNAME/claude-api-guard@main` as a literal
+  placeholder — see "Publishing" below for what that actually needs.
+
+**What's validated and what isn't, stated plainly:** all 4 YAML files
+parse as valid YAML, and the Python logic each step actually calls
+(`ast_scan.py`'s exit code, `action_combine.py`'s severity gate and
+`$GITHUB_OUTPUT` writing) was tested directly and behaves correctly across
+all 3 cases that matter — findings at/above threshold, findings below
+`fail-on`, and no findings. What's **not** validated: an actual GitHub
+Actions run. Tried to get there for real with `nektos/act` (a local
+Actions runner) — it installed fine, but it needs a Docker daemon to spin
+up runner containers, and this environment doesn't have one running
+(`docker info` confirms no daemon, not just a missing CLI). So the YAML
+wiring itself — step outputs flowing between steps, the `${{ }}` expression
+syntax, `uses: ./` resolving correctly — is standard, known-working GitHub
+Actions syntax, but hasn't been proven end-to-end the way everything else
+in this project has been. First real PR against a real repo with Actions
+enabled is the actual test that's still outstanding.
+
+## Publishing
+
+Everything so far lives in a local git repo with no remote — `git remote
+-v` is empty. That's fine for building and testing, but the Action and
+both consumer-workflow templates only become *usable* once this repo has
+a real `github.com/<owner>/claude-api-guard` to point `uses:` at. That's a
+separate, deliberate decision (a public repo, a name, whether it lives
+under a personal account or something else) rather than something to do
+as a side effect of writing code — worth raising explicitly rather than
+just doing it.

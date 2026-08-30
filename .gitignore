@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 report*.json
+claude-api-guard-findings.json
+py_findings.json
+js_findings.json

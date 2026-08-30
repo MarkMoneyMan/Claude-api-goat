@@ -1,0 +1,47 @@
+name: self-check
+
+# Dogfoods action.yml against this repo itself, on every push/PR. Two
+# jobs, both are really assertions about the action's own correctness
+# (not about this repo's code health): one path is known to contain real
+# findings and must fail the severity gate, the other is known to be
+# clean and must pass it. If either assumption stops holding, that's the
+# action's behavior regressing, not a real finding to triage.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  expect-findings-on-example-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run claude-api-guard against example_project/ (known to have findings)
+        id: scan
+        uses: ./
+        continue-on-error: true
+        with:
+          path: example_project/
+          fail-on: HIGH
+      - name: Assert the severity gate actually failed
+        run: |
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "::error::Expected the HIGH-severity gate to fail against example_project/ (it has known HIGH findings), but the step outcome was '${{ steps.scan.outcome }}'."
+            exit 1
+          fi
+          echo "OK: gate correctly failed (${{ steps.scan.outputs.findings-count }} finding(s))."
+
+  expect-clean-on-own-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run claude-api-guard against this tool's own source (should be clean — it doesn't call the Anthropic API itself)
+        id: scan
+        uses: ./
+        with:
+          path: rules.py
+          fail-on: HIGH
+      - name: Assert no findings
+        run: |
+          echo "OK: ${{ steps.scan.outputs.findings-count }} finding(s) on the tool's own source (expected 0)."

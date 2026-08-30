@@ -1,0 +1,75 @@
+name: "claude-api-guard"
+description: >
+  Scans a Python (and optionally JS/TS) codebase for usage of the
+  Claude/Anthropic API that's broken, or about to break, because of a
+  known, dated API change. Detection only by default — see the separate
+  autofix step below for the 5 rules that can be safely auto-patched.
+author: "claude-api-guard prototype"
+
+inputs:
+  path:
+    description: "Path to scan, relative to the repo root."
+    required: false
+    default: "."
+  fail-on:
+    description: >
+      Minimum severity that fails the job: HIGH, MEDIUM, or LOW. Set to
+      "none" to always succeed and just report.
+    required: false
+    default: "HIGH"
+  scan-js:
+    description: "Also run the JS/TS scanner (js_scanner/ast_scan.js) if the path contains .js/.ts files."
+    required: false
+    default: "false"
+
+outputs:
+  findings-count:
+    description: "Total number of findings across all scanners that ran."
+    value: ${{ steps.combine.outputs.findings-count }}
+  findings-json:
+    description: "Path to the combined JSON findings file."
+    value: ${{ steps.combine.outputs.findings-json }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Run Python scanner (ast_scan.py)
+      id: py-scan
+      shell: bash
+      run: |
+        set +e
+        python3 "${{ github.action_path }}/ast_scan.py" "${{ inputs.path }}" --json py_findings.json
+        py_exit=$?
+        set -e
+        echo "exit=$py_exit" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Node (for JS/TS scan)
+      if: inputs.scan-js == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Run JS/TS scanner (js_scanner/ast_scan.js)
+      id: js-scan
+      if: inputs.scan-js == 'true'
+      shell: bash
+      run: |
+        set +e
+        npm --prefix "${{ github.action_path }}/js_scanner" install --no-audit --no-fund
+        node "${{ github.action_path }}/js_scanner/ast_scan.js" "${{ inputs.path }}" --json js_findings.json
+        js_exit=$?
+        set -e
+        echo "exit=$js_exit" >> "$GITHUB_OUTPUT"
+
+    - name: Combine findings and apply severity gate
+      id: combine
+      shell: bash
+      run: |
+        python3 "${{ github.action_path }}/action_combine.py" \
+          --fail-on "${{ inputs.fail-on }}" \
+          py_findings.json ${{ inputs.scan-js == 'true' && 'js_findings.json' || '' }}
