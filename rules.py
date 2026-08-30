@@ -134,3 +134,101 @@ RULES = [
         "fix": "No action needed right now — just keep an eye on the release notes.",
     },
 ]
+
+# --- Rules below this line came from running extract_rules.py for real ---
+#
+# On 2026-08-27, extract_rules.py was run against Anthropic's actual release
+# notes (pipeline_runs/2026-08-27_changelog_input.txt) with a real API key.
+# It found 14 breaking changes; 6 were the same ones already hand-written
+# above (under different ids — the two extraction passes, one human, one
+# automated, didn't converge on identical naming, which is itself worth
+# noting rather than papering over). These 8 are the genuinely new ones the
+# automated pass caught and hand-extraction had missed. Copied over as-is
+# from pipeline_runs/2026-08-27_extracted_rules.json, spot-checked for
+# sanity but not further hand-tuned — that's the point of this being
+# automated. See ast_scan.py's GENERIC_RULE_EXCLUDE_IDS for which rules get
+# bespoke AST logic vs. run through the generic node-scoped regex engine.
+NEW_RULES = [
+    {
+        "id": "beta-files-skills-sdk-shape-change",
+        "pattern": r"client\.beta\.(files|skills)\b",
+        "applies_if_model": None,
+        "severity": "HIGH",
+        "deadline": "2026-08-27",
+        "title": "client.beta.files and client.beta.skills no longer send beta headers and return new response shapes",
+        "detail": "In Python SDK 1.2.0+, accessing files or skills through the beta namespace now behaves identically to the non-beta namespace — old beta headers/response shapes are gone. client.beta.skills.delete() now deletes a Skill together with all its versions, and BetaSkill is renamed BetaContainerSkill.",
+        "fix": "Migrate to client.files and client.skills directly; update BetaSkill references to BetaContainerSkill.",
+    },
+    {
+        "id": "python-sdk-v1-httpx-to-httpx2",
+        "pattern": r"import\s+httpx(?!2)|from\s+httpx(?!2)\s+import|httpx\.(Client|AsyncClient|Timeout|Proxy|Limits|Transport)",
+        "applies_if_model": None,
+        "severity": "HIGH",
+        "deadline": "2026-08-20 (Python SDK v1.0)",
+        "title": "Python SDK v1.0 moves HTTP layer from httpx to httpx2",
+        "detail": "Python SDK v1.0 replaces the httpx dependency with httpx2. Custom http_client/Timeout/transport objects built from httpx must be rebuilt from httpx2; code relying on libraries that monkeypatch httpx needs httpx2.alias_httpx() at startup.",
+        "fix": "Replace `import httpx` with `import httpx2` for custom HTTP clients/transports, and call httpx2.alias_httpx() at startup if you use a library that monkeypatches httpx.",
+    },
+    {
+        "id": "python-sdk-v1-compaction-control-removed",
+        "pattern": r"compaction_control",
+        "applies_if_model": None,
+        "severity": "MEDIUM",
+        "deadline": "2026-08-20 (Python SDK v1.0)",
+        "title": "Python SDK v1.0 removes the tool runner's client-side compaction_control",
+        "detail": "Python SDK v1.0 removes the compaction_control option from the client-side tool runner. Code passing this parameter will break after upgrading.",
+        "fix": "Remove any use of compaction_control from tool runner calls before upgrading to Python SDK v1.0.",
+    },
+    {
+        "id": "python-sdk-v1-async-with-raw-response",
+        "pattern": r"\.with_raw_response\b",
+        "applies_if_model": None,
+        "severity": "HIGH",
+        "deadline": "2026-08-20 (Python SDK v1.0)",
+        "title": "Python SDK v1.0 async client: .with_raw_response results require await response.parse()",
+        "detail": "On the async client in Python SDK v1.0, results from .with_raw_response now require `await response.parse()`. Existing code accessing the parsed result synchronously will silently misbehave or error.",
+        "fix": "Update async .with_raw_response usages to `await response.parse()`.",
+    },
+    {
+        "id": "python-sdk-v1-bedrock-no-default-region",
+        "pattern": r"AnthropicBedrock\s*\(",
+        "applies_if_model": None,
+        "severity": "MEDIUM",
+        "deadline": "2026-08-20 (Python SDK v1.0)",
+        "title": "Python SDK v1.0 AnthropicBedrock raises an error when no AWS region is configured",
+        "detail": "In Python SDK v1.0, AnthropicBedrock no longer silently defaults to us-east-1 when no AWS region is configured; it now raises an error instead.",
+        "fix": "Explicitly configure an AWS region (env var or constructor argument) before constructing AnthropicBedrock.",
+    },
+    {
+        "id": "python-sdk-v1-min-python-version",
+        "pattern": r"python_requires|Programming Language :: Python :: 3\.[0-9]\b",
+        "applies_if_model": None,
+        "severity": "MEDIUM",
+        "deadline": "2026-08-20 (Python SDK v1.0)",
+        "title": "Python SDK v1.0 requires Python 3.10 or later",
+        "detail": "Python SDK v1.0 drops support for Python versions below 3.10. This rule only fires on real Python source (e.g. classifiers inside a setup.py setup() call) — it can't see requirements pinned in non-Python files like pyproject.toml.",
+        "fix": "Upgrade the project's Python runtime requirement to 3.10+ before installing Python SDK v1.0.",
+    },
+    {
+        "id": "memory-list-managed-agents-header-behavior-change",
+        "pattern": r"managed-agents-2026-04-01",
+        "applies_if_model": None,
+        "severity": "MEDIUM",
+        "deadline": "2026-07-22",
+        "title": "managed-agents-2026-04-01 header adopts new memory listing behavior",
+        "detail": "Since 2026-07-22, the managed-agents-2026-04-01 beta header on memory store list endpoints returns results in stable server-defined order (order_by/order ignored), restricts depth to 0/1/omitted, and requires path_prefix to end with '/'. Old page cursors are invalid.",
+        "fix": "Audit memory-list calls using this header: drop reliance on order_by/order, fix depth values, and restart pagination from page one.",
+    },
+    {
+        "id": "computer-use-toolset-new-shape",
+        "pattern": r"computer_20251124",
+        "applies_if_model": None,
+        "severity": "MEDIUM",
+        "deadline": "2026-08-19",
+        "title": "computer_toolset_20260801 (GA) changes request shape vs. beta computer_20251124",
+        "detail": "The computer use tool is now GA as computer_toolset_20260801. Upgrading from the beta computer_20251124 changes the request shape and tool handling (batch actions, zoom enabled by default).",
+        "fix": "Follow the migration guide before switching from computer_20251124 to computer_toolset_20260801.",
+    },
+]
+
+RULES = RULES + NEW_RULES

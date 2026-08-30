@@ -22,10 +22,42 @@ drowning real findings in noise.
 import argparse
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
+from rules import RULES
+
 SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build"}
+
+# Rule ids that already have bespoke, more-precise logic below (var_dict_index
+# resolution, thinking+effort combo checks, etc.) — running the generic
+# engine on these too would just produce duplicate or less-precise findings.
+# Also excludes model-tentative-retirement-sonnet45: that's an informational
+# "no action needed" note, not a broken-code finding, so it doesn't belong
+# in a scanner whose job is flagging things that ARE breaking.
+GENERIC_RULE_EXCLUDE_IDS = {
+    "sdk-v1-sampling-params-removed",
+    "sdk-v1-text-completions-removed",
+    "manual-thinking-budget",
+    "opus5-effort-xhigh-thinking-disabled",
+    "assistant-prefill-removed",
+    "experimental-endpoint-retiring",
+    "model-deprecated-sonnet4-opus4",
+    "model-retired-opus-4-1",
+    "fast-mode-removed-opus-4-7",
+    "model-tentative-retirement-sonnet45",
+}
+
+# Node types whose *own* unparsed text becomes a match candidate for the
+# generic engine. Deliberately narrow: these are real, executable pieces of
+# code, never a comment (AST never sees comments at all) and never an
+# unrelated docstring (a bare Expr(Constant) node isn't in this list, so a
+# module/function docstring is never a candidate on its own). Restricting to
+# single nodes rather than "the whole file" is what keeps this from
+# regressing to v1's noise — a match has to live inside a real call,
+# import, or assignment, not just appear anywhere in the source text.
+GENERIC_CANDIDATE_TYPES = (ast.Call, ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign)
 
 # Models known to reject non-default temperature/top_p/top_k as of SDK v1.0 —
 # kept for reference/labelling only; the SDK-v1.0 rule itself applies
@@ -121,6 +153,169 @@ def find_calls(tree, chain_suffixes):
             chain = get_call_chain_name(node)
             if any(chain.endswith(suffix) for suffix in chain_suffixes):
                 yield node, chain
+
+
+def node_model_literal(node):
+    """Best-effort: if this node is a Call with a literal model= kwarg, return it."""
+    if isinstance(node, ast.Call):
+        for kw in node.keywords:
+            if kw.arg == "model":
+                return literal_str(kw.value)
+    return None
+
+
+def file_references_anthropic(tree):
+    """True if this file imports the `anthropic` package anywhere.
+
+    This is a precondition, not a parameter-guessing heuristic — it's a
+    different kind of check from the "model context anywhere in the file"
+    mistake that made v1 noisy. That mistake was inferring *which specific
+    value* (which model) applies to a match found elsewhere. This is only
+    asking whether the file could possibly contain Anthropic SDK code at
+    all. If it never imports `anthropic`, nothing in it can be Anthropic
+    SDK code breaking — full stop, not a guess.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name == "anthropic" or a.name.startswith("anthropic.") for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            # level == 0 means an absolute import. A relative import like
+            # `from ...anthropic.chat.transformation import X` (level=3) can
+            # have a module string that also starts with "anthropic." but
+            # names a same-package submodule, not the real PyPI package.
+            # Bug found live: this exact pattern in litellm (its own
+            # internal `litellm.types.llms.anthropic` and relative
+            # `...anthropic.*` submodules) tripped the naive version of
+            # this check.
+            if node.level == 0 and node.module and (node.module == "anthropic" or node.module.startswith("anthropic.")):
+                return True
+    return False
+
+
+def build_async_context_map(tree):
+    """Map id(node) -> True if node sits inside an `async def` function body
+    (nearest enclosing FunctionDef/AsyncFunctionDef wins; a sync function
+    nested inside an async one is correctly sync). No parent pointers in
+    the stdlib ast module, so this is a one-time top-down walk instead."""
+    ctx = {}
+
+    def walk(node, in_async):
+        ctx[id(node)] = in_async
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.AsyncFunctionDef):
+                walk(child, True)
+            elif isinstance(child, ast.FunctionDef):
+                walk(child, False)
+            else:
+                walk(child, in_async)
+
+    walk(tree, False)
+    return ctx
+
+
+# Rules whose pattern alone is too broad to trust (proven live: see README —
+# python-sdk-v1-httpx-to-httpx2 hit 1,604 lines in litellm, almost entirely
+# generic HTTP-client code with no relation to the Anthropic SDK). Rather
+# than trust the auto-extracted pattern on its own, these get one extra,
+# narrow structural condition. Still driven by the auto-extracted title/
+# severity/detail/fix — only the *gating* is hand-added, and each reason is
+# a precondition (not a guessed parameter), same spirit as
+# file_references_anthropic() above.
+GENERIC_EXTRA_CONDITIONS = {
+    # The breaking change is specifically about the ASYNC client's
+    # .with_raw_response. Confirmed live: the only anthropic-sdk-python hit
+    # for this rule was a *sync* test function correctly calling
+    # `response.parse()` with no await at all — not broken, just matched by
+    # a pattern with no async awareness. Second bug found live, same rule:
+    # `.with_raw_response` is not an Anthropic-specific method name at all —
+    # it's a shared convention across every Stainless-generated SDK
+    # (Anthropic's and OpenAI's both are). litellm's Azure/OpenAI client
+    # calls (`azure_client.chat.completions.with_raw_response.create(...)`)
+    # matched even after the async fix, because they're genuinely async —
+    # just not Anthropic. Needs both conditions at once.
+    "python-sdk-v1-async-with-raw-response": lambda node, snippet, tree_ctx: (
+        tree_ctx["async_map"].get(id(node), False) and tree_ctx["references_anthropic"]
+    ),
+    # httpx is a general-purpose HTTP library with no inherent connection to
+    # the Anthropic SDK; only meaningful in a file that actually imports
+    # anthropic. Confirmed live: litellm imports httpx in ~40 files for its
+    # own multi-provider HTTP handling and doesn't import `anthropic` (the
+    # package) in any of them — same root cause as the kwargs-handling
+    # dead-end documented elsewhere in this README.
+    "python-sdk-v1-httpx-to-httpx2": lambda node, snippet, tree_ctx: tree_ctx["references_anthropic"],
+}
+
+
+def generic_scan(tree, path, rules):
+    """Run auto-extracted (or hand-written, not-yet-promoted) rules that
+    don't have bespoke AST logic, by regex-matching each rule's `pattern`
+    against the unparsed text of individual real-code nodes — never the
+    whole file, never a comment or unrelated string — instead of hand-
+    coding a check per rule the way the block above does.
+
+    This is what actually closes the gap between extract_rules.py (which
+    produces regex patterns, because that's a format an LLM can reliably
+    emit) and this scanner (which is only trustworthy because it doesn't
+    regex the whole file). Trade-off, stated plainly: a rule scoped to a
+    specific model (applies_if_model) can only be checked precisely when
+    the matching node is itself a Call with a literal model= kwarg — e.g.
+    an Import statement has no model context at all. Rather than guess
+    from file-wide context (the exact mistake that made v1 noisy), those
+    cases are flagged with a lower-confidence note instead of silently
+    assumed to apply.
+
+    First real run of this against 6 public repos found two rules whose
+    pattern alone was still too broad (see GENERIC_EXTRA_CONDITIONS) — the
+    generic engine narrows the honesty gap vs. hand-coding, it doesn't
+    close it completely. A pattern this permissive is still a bad rule; the
+    fix each time is a real, checkable precondition, not a wider net.
+    """
+    tree_ctx = {
+        "async_map": build_async_context_map(tree),
+        "references_anthropic": file_references_anthropic(tree),
+    }
+
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, GENERIC_CANDIDATE_TYPES):
+            continue
+        try:
+            snippet = ast.unparse(node)
+        except Exception:
+            continue
+
+        for rule in rules:
+            if rule["id"] in GENERIC_RULE_EXCLUDE_IDS:
+                continue
+            try:
+                if not re.search(rule["pattern"], snippet):
+                    continue
+            except re.error:
+                # An auto-extracted regex isn't guaranteed valid — skip that
+                # one rule rather than crash the whole scan over it.
+                continue
+
+            extra_condition = GENERIC_EXTRA_CONDITIONS.get(rule["id"])
+            if extra_condition and not extra_condition(node, snippet, tree_ctx):
+                continue
+
+            title = rule["title"]
+            applies = rule.get("applies_if_model")
+            if applies:
+                model = node_model_literal(node)
+                if model:
+                    if not any(a in model for a in applies):
+                        continue
+                else:
+                    title += " (model-scoped rule, but no literal model= on this exact node — unconfirmed, flagged for manual check)"
+
+            findings.append(_finding(
+                path, getattr(node, "lineno", 0), snippet.splitlines()[0][:200],
+                rule["id"], rule["severity"], rule["deadline"], title,
+                rule["detail"], rule["fix"],
+            ))
+    return findings
 
 
 def scan_source(path, text):
@@ -248,6 +443,11 @@ def scan_source(path, text):
                         f"/v1/experimental/{bad} was shut down 2026-08-17.",
                         "Migrate to the stable prompt-engineering workflow in the Console.",
                     ))
+
+    # --- Everything else: rules that came from extract_rules.py and don't
+    # (yet) have bespoke logic above. See generic_scan()'s docstring for
+    # the trade-off this makes vs. the hand-coded checks. ---
+    findings.extend(generic_scan(tree, path, RULES))
 
     return findings
 

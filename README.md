@@ -14,12 +14,12 @@ break) because of a known, dated API change.
   vendors' API calls that happened to share a method name with Anthropic's.
 
 - **`ast_scan.py`** — v2, walks the real Python syntax tree instead of
-  matching text. Only looks at actual `client.messages.create(...)` /
-  `client.completions.create(...)` call sites, reads `model=` from *that
-  same call*, and checks the client isn't actually OpenAI's SDK (which
-  has a same-named legacy `completions.create` method). Same 6 repos:
-  **17 findings total** — a ~99% drop in noise, and every remaining
-  finding checks out on manual inspection.
+  matching text. Started with hand-coded checks for the 9 hand-written
+  rules only; as of 2026-08-27 it also runs a generic engine
+  (`generic_scan()`) that turns any rule from `rules.py` — including ones
+  `extract_rules.py` generates automatically — into an AST-level check,
+  without hand-coding logic per rule. See "Rules" and step 2 below for how
+  that engine earned its noise budget the hard way.
 
 ## Rules
 
@@ -80,16 +80,59 @@ found). Plus the 6 public repos above for false-positive testing.
    and by making `extract()` raise a clear error on `stop_reason ==
    "max_tokens"` instead of failing on a cryptic JSON error.
 
-   **Known gap, stated plainly:** these 14 auto-extracted rules use the
-   v1 `rules.py` schema (regex `pattern` field) that `scan.py` reads —
-   `ast_scan.py` (the good, low-noise v2 scanner) does **not** read
-   `rules.py` at all; every check in it is still hand-coded per rule
-   type. So automated extraction currently feeds the noisier scanner, not
-   the one actually worth trusting. Closing that gap — teaching
-   `ast_scan.py` to turn a generic extracted rule into an AST-level check
-   — is real, non-trivial work and is now the top priority below.
-3. Teach `ast_scan.py` to consume auto-extracted rules directly, instead
-   of only hand-coded checks (the gap found in step 2).
+   **Known gap at the time, stated plainly:** these 14 auto-extracted
+   rules used the v1 `rules.py` schema (regex `pattern` field) that
+   `scan.py` reads — `ast_scan.py` (the good, low-noise v2 scanner) didn't
+   read `rules.py` at all; every check in it was hand-coded per rule type.
+   Closed in step 3 below.
+3. ~~Teach `ast_scan.py` to consume auto-extracted rules~~ — **done, and
+   it broke on the first real run, which is exactly why "run it for
+   real" beats "looks right on paper."** Added `generic_scan()`: for each
+   of the 8 new (non-hand-coded) rules, it regex-matches the rule's
+   `pattern` against the unparsed source of individual real AST nodes
+   (`Call`, `Import`, `Assign`, ...) — never the whole file, so it
+   structurally can't match a comment or a docstring the way v1 did. First
+   run against the same 6 repos: **litellm alone produced 1,720
+   findings**, almost all from one rule (`python-sdk-v1-httpx-to-httpx2`,
+   1,604 hits) and a second (`python-sdk-v1-async-with-raw-response`, 114
+   hits). Both were the *same class* of bug as the very first
+   `chat.completions.create` collision, just recurring at the pattern
+   level instead of the file-context level:
+   - `httpx` is a generic HTTP library. litellm imports it ~40 times for
+     its own multi-provider handling and — confirmed by grep — never
+     imports the actual `anthropic` package in any of them. The pattern
+     alone can't tell "this httpx client feeds the Anthropic SDK" apart
+     from "this httpx client does literally anything else."
+   - `.with_raw_response` isn't Anthropic-specific either — it's a shared
+     naming convention across every Stainless-generated SDK, and
+     OpenAI's is one too. litellm's Azure/OpenAI calls
+     (`azure_client.chat.completions.with_raw_response.create(...)`)
+     matched it directly. Separately, the real breaking change only
+     affects the *async* client, and the pattern had no async awareness
+     at all — its single false-positive hit in `anthropic-sdk-python`
+     itself was a **sync** test correctly calling `response.parse()` with
+     no `await`, not broken code.
+
+   Fix, in both cases: not a wider or narrower regex, but one real
+   structural precondition per rule (`GENERIC_EXTRA_CONDITIONS` in
+   `ast_scan.py`) — "this file actually imports `anthropic`" (checked
+   correctly for *absolute* imports only; a second bug surfaced here too,
+   since litellm's own `from ...anthropic.chat.transformation import X`
+   is a *relative* import of its own same-named submodule and initially
+   tripped the naive version of this check) and "this call site sits
+   inside an `async def`." After both fixes, same 6 repos:
+   **litellm 1,720 → 2, aider 11 → 0, anthropic-cookbook's 36 remaining
+   findings all check out on inspection** (real `client.beta.files` /
+   `client.beta.skills` calls that will genuinely need updating). One
+   repo didn't clean up: `anthropic-sdk-python` still shows ~1,478,
+   because it's not a fair test bed for these particular rules — it *is*
+   the SDK, so its own source and test suite naturally define and
+   exercise the exact strings these rules look for (e.g. the one
+   `memory-list` hit inspected was the SDK's own source *defining* the
+   `MANAGED_AGENTS_BETA` constant). That's a limitation of the test setup,
+   not a scanner bug — but it's honest to say the generic engine has only
+   been proven clean against real *downstream consumer* code, not against
+   a library that mirrors its own rules back at itself.
 4. Multi-language support (start with JS/TS via a tree-sitter parser).
 5. Auto-fix: generate the actual code patch and open a PR, once detection
    has been trusted on more real-world code than just one project.
