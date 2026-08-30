@@ -288,10 +288,24 @@ of someone running `ast_scan.py` by hand and remembering to. Two pieces:
 - **`.github/workflows/self-check.yml`** — dogfoods the action against
   *this* repo on every push: one job asserts the severity gate correctly
   **fails** against `example_project/` (which has known HIGH findings by
-  design), the other asserts it correctly **passes** against the tool's
-  own source (`rules.py` etc. — which doesn't itself call the Anthropic
-  API, so it should always be clean). Both are assertions about the
-  action's own correctness, not about this repo's code health.
+  design), the other asserts it correctly **passes** against a dedicated
+  known-clean fixture, `ci_fixtures/known_clean.py`. Both are assertions
+  about the action's own correctness, not about this repo's code health.
+
+  That second job originally pointed at `rules.py` itself, on the
+  reasoning "it doesn't call the Anthropic API, so it should be clean."
+  The first real run on GitHub Actions (run #1, commit `fedb0e7`) came
+  back red. Reproduced locally with `python3 ast_scan.py rules.py`: 7
+  findings, several HIGH. The reasoning was wrong — "doesn't call the
+  API" and "contains no matching text" aren't the same property, and
+  `rules.py`'s entire job is to store the literal trigger strings (like
+  `client.beta.files`, `managed-agents-2026-04-01`) as rule data, so the
+  generic engine's `ast.Assign` matching legitimately finds them there.
+  Fixed by pointing the job at a small, deliberately unrelated fixture
+  file instead of reusing a file whose actual purpose guarantees it can
+  never be "clean." Caught by getting a real Actions run — this is
+  exactly the class of bug local YAML validation and the unit-tested
+  Python logic couldn't have found (see below).
 - **`examples/consumer-workflows/`** — two templates (`check-on-pr.yml`,
   a weekly `autofix-weekly.yml` that opens a PR via the well-established
   `peter-evans/create-pull-request` action when `autofix.py` finds
@@ -304,24 +318,30 @@ parse as valid YAML, and the Python logic each step actually calls
 (`ast_scan.py`'s exit code, `action_combine.py`'s severity gate and
 `$GITHUB_OUTPUT` writing) was tested directly and behaves correctly across
 all 3 cases that matter — findings at/above threshold, findings below
-`fail-on`, and no findings. What's **not** validated: an actual GitHub
-Actions run. Tried to get there for real with `nektos/act` (a local
-Actions runner) — it installed fine, but it needs a Docker daemon to spin
-up runner containers, and this environment doesn't have one running
-(`docker info` confirms no daemon, not just a missing CLI). So the YAML
-wiring itself — step outputs flowing between steps, the `${{ }}` expression
-syntax, `uses: ./` resolving correctly — is standard, known-working GitHub
-Actions syntax, but hasn't been proven end-to-end the way everything else
-in this project has been. First real PR against a real repo with Actions
-enabled is the actual test that's still outstanding.
+`fail-on`, and no findings. Local testing stopped there: `nektos/act` (a
+local Actions runner) installed fine but needs a Docker daemon to spin up
+runner containers, and this environment doesn't have one running
+(`docker info` confirms no daemon, not just a missing CLI).
+
+That gap got closed for real once the repo was published (see
+"Publishing" below): `self-check.yml` ran on actual GitHub Actions and
+immediately found a real bug — the `rules.py`-as-known-clean-fixture
+mistake described above — that no amount of local YAML validation or
+unit-tested Python logic could have surfaced, because the bug wasn't in
+the YAML wiring or the scanner logic, it was in a *test's assumption*
+about its own fixture. After swapping in `ci_fixtures/known_clean.py`
+and re-pushing, the expectation is both self-check jobs go green; that
+still needs confirming against a second real run before calling this
+settled.
 
 ## Publishing
 
-Everything so far lives in a local git repo with no remote — `git remote
--v` is empty. That's fine for building and testing, but the Action and
-both consumer-workflow templates only become *usable* once this repo has
-a real `github.com/<owner>/claude-api-guard` to point `uses:` at. That's a
-separate, deliberate decision (a public repo, a name, whether it lives
-under a personal account or something else) rather than something to do
-as a side effect of writing code — worth raising explicitly rather than
-just doing it.
+Published to a real (private) GitHub repository:
+`github.com/MarkMoneyMan/Claude-api-goat`. Getting there needed two
+rounds of Personal Access Token permission fixes — GitHub refuses to let
+a token without "Workflows" scope push changes to `.github/workflows/*`,
+even if it already has "Contents: Read and write" — which isn't obvious
+until the push is rejected with that exact error. Both the Action itself
+and the consumer-workflow templates still reference the placeholder
+`YOUR-GITHUB-USERNAME/claude-api-guard@main`; updating those to the real
+`MarkMoneyMan/Claude-api-goat@main` is a remaining step, not yet done.

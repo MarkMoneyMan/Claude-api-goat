@@ -32,16 +32,20 @@ jobs:
           fi
           echo "OK: gate correctly failed (${{ steps.scan.outputs.findings-count }} finding(s))."
 
-  expect-clean-on-own-source:
+  expect-clean-on-known-clean-fixture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run claude-api-guard against this tool's own source (should be clean — it doesn't call the Anthropic API itself)
+      - name: Run claude-api-guard against ci_fixtures/known_clean.py (should be clean)
         id: scan
         uses: ./
         with:
-          path: rules.py
+          path: ci_fixtures/known_clean.py
           fail-on: HIGH
       - name: Assert no findings
         run: |
-          echo "OK: ${{ steps.scan.outputs.findings-count }} finding(s) on the tool's own source (expected 0)."
+          if [ "${{ steps.scan.outputs.findings-count }}" != "0" ]; then
+            echo "::error::Expected 0 findings on ci_fixtures/known_clean.py, got ${{ steps.scan.outputs.findings-count }}. See that file's docstring for why it exists — it must stay free of every rule's trigger strings."
+            exit 1
+          fi
+          echo "OK: 0 findings on the known-clean fixture, as expected."
