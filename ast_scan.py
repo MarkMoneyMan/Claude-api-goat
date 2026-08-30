@@ -449,7 +449,42 @@ def scan_source(path, text):
     # the trade-off this makes vs. the hand-coded checks. ---
     findings.extend(generic_scan(tree, path, RULES))
 
-    return findings
+    return dedupe_findings(findings)
+
+
+def dedupe_findings(findings):
+    """Collapse findings that are the same real thing reported twice.
+
+    Bug found live building the JS/TS sibling of this scanner (ast_scan.js)
+    and then checking whether the same bug existed here too — it did: the
+    generic engine's candidate node types overlap (a Call is a child of the
+    Assign/AnnAssign that assigns its result, e.g. `client =
+    AnthropicBedrock(...)`), so a pattern matching text inside that Call
+    also matches when the *same text* is unparsed again as part of the
+    surrounding Assign. Checked directly: this was responsible for 427 of
+    the 1,478 findings reported for anthropic-sdk-python (~29%) — the real,
+    de-duplicated count there is 1,051. Fixing the overlap at the source
+    (e.g. skip an Assign whose value is already a matched Call) would need
+    parent-tracking this module doesn't have yet; deduping identical
+    (file, line, rule_id) results is the honest fix available right now.
+    """
+    # Prefer the more informative duplicate: when a model-scoped rule
+    # matches via two overlapping nodes (e.g. an Assign and the Call it
+    # wraps), only the Call node can see the model= kwarg — an Assign node
+    # never carries "unconfirmed" gating info of its own. Keeping whichever
+    # copy was seen first (typically the outer, less specific node, since
+    # ast.walk visits parents before children) would silently downgrade a
+    # confirmed match to an "unconfirmed, flagged for manual check" one.
+    best = {}
+    order = []
+    for f in findings:
+        key = (f["file"], f["line"], f["rule_id"])
+        if key not in best:
+            order.append(key)
+            best[key] = f
+        elif "unconfirmed" in best[key]["title"] and "unconfirmed" not in f["title"]:
+            best[key] = f
+    return [best[key] for key in order]
 
 
 def _finding(path, line, code, rule_id, severity, deadline, title, detail, fix):

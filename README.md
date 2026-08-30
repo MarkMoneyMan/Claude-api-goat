@@ -21,6 +21,11 @@ break) because of a known, dated API change.
   without hand-coding logic per rule. See "Rules" and step 2 below for how
   that engine earned its noise budget the hard way.
 
+- **`js_scanner/`** — JS/TS sibling, added 2026-08-27. Node + `@babel/parser`
+  instead of Python's `ast` module (simpler than getting a tree-sitter
+  grammar built in this environment; same "walk the real syntax tree"
+  idea). See "JS/TS support" below.
+
 ## Rules
 
 `rules.py` holds the current rule set, hand-extracted from Anthropic's
@@ -133,6 +138,86 @@ found). Plus the 6 public repos above for false-positive testing.
    not a scanner bug — but it's honest to say the generic engine has only
    been proven clean against real *downstream consumer* code, not against
    a library that mirrors its own rules back at itself.
-4. Multi-language support (start with JS/TS via a tree-sitter parser).
+
+   **Update, found building the JS/TS scanner below:** that ~1,478 number
+   was itself inflated by a real bug, not just the self-referential-repo
+   problem — `generic_scan`'s candidate node types overlap (a `Call` is a
+   child of the `Assign` that captures its result, e.g. `client =
+   AnthropicBedrock(...)`), so the same real match got reported twice, once
+   per node. Confirmed: 427 of the 1,478 were exact-duplicate
+   `(file, line, rule_id)` triples. Fixed with a `dedupe_findings()` pass
+   that also prefers the more informative duplicate (a model-scoped rule
+   can only confirm the model on the `Call` node itself, never on the
+   wrapping `Assign` — naive dedup could keep the less-informative
+   "unconfirmed" copy). Real count for `anthropic-sdk-python`: **1,051**,
+   still mostly the self-referential-repo effect, not noise.
+4. ~~Multi-language support (start with JS/TS)~~ — **done as a first pass**,
+   see "JS/TS support" below.
 5. Auto-fix: generate the actual code patch and open a PR, once detection
    has been trusted on more real-world code than just one project.
+
+## JS/TS support
+
+`js_scanner/ast_scan.js` — same "walk the real tree, match node-by-node,
+never the whole file" idea as `ast_scan.py`, ported to JS/TS. Built the
+generic engine directly from the start this time (no separate hand-coded
+phase first) — there was no reason to relearn the lesson from the Python
+side about testing against real repos before trusting a rule set.
+
+**Rule set is deliberately smaller than Python's.** Went back through the
+same raw changelog text looking specifically for what's confirmed to touch
+the TypeScript SDK, rather than assuming every Python-flagged change
+applies by analogy. Included: API/request-level changes that don't care
+which language calls them (model deprecations, Opus 4.7 fast-mode removal,
+Opus 5 effort+thinking rejection, assistant-prefill removal, experimental
+endpoint retirement), plus the two changes the changelog explicitly names
+"Python SDK X, TypeScript SDK Y, ...": the `beta.files`/`beta.skills`
+shape change and the memory-list header change. Excluded: every rule whose
+own title says "Python SDK v1.0" (httpx→httpx2, `compaction_control`,
+async `.with_raw_response`, Bedrock's default region, the Python 3.10
+floor) — those are Python-package-internal, and there's no changelog
+evidence the TypeScript SDK did the same thing. Left as an open question
+rather than guessed.
+
+**First live run found 4 real bugs, same pattern as every other "test it
+for real" pass in this project:**
+
+1. A crash, not just noise: `@babel/traverse`'s scope-crawling threw an
+   uncaught error on one real file in `vercel/ai` (a valid-but-unusual TS
+   type/value naming collision) and killed the *entire* batch scan, losing
+   every finding already collected. Fixed with a per-file try/catch, same
+   principle as `ast.parse`'s `SyntaxError` being caught per-file in
+   Python, just a different failure mode (traverse-time, not parse-time).
+2. The same cross-node duplicate-finding bug described in step 3 above —
+   found in Python first, then confirmed live here too by literally
+   translating the same fix and watching it matter immediately.
+3. `assistant-prefill-removed` regex-matched **1,619 times** in
+   `vercel/ai` alone: `role: "assistant"` near `content:` is the shape of
+   *any* code representing an assistant chat message at all (rendering
+   history, type defs, test fixtures), not specifically "the last message
+   of an outgoing request." Fixed by pulling this one rule out of the
+   generic engine entirely and porting the precise version of the check
+   from `ast_scan.py`'s `extract_messages_prefill()` — only the literal
+   last element of an actual `messages.create()` call's `messages` array
+   counts.
+4. Two variations on "a candidate node's span can be bigger than it
+   looks": a JS test-framework call like
+   `describe('X', () => { ...whole rest of the file... })` is itself one
+   `CallExpression`, so anything anywhere in that block counted as a
+   "match" on the outer call; a large `expect(x).toMatchObject({ ...huge
+   mock... })` has the same problem without being a callback. Fixed the
+   first with a structural check (skip a call whose argument is a function
+   with a real body — traversal still walks into it, so a real Anthropic
+   call nested inside still gets checked on its own node) and the second
+   with a blunter 2000-character snippet cap, documented as a safety valve
+   rather than a precise fix.
+
+**Net result**, tested against `anthropic-sdk-typescript` (the SDK's own
+repo — same self-referential-test-bed caveat as the Python side applies)
+and `vercel/ai` (a real, large downstream consumer): `vercel/ai` went
+1,734 → 67 findings across the 4 fixes above, and the 67 remaining check
+out on inspection (real references to `computer_20251124`, a real
+deprecated-model-string literal, etc. — see git history for the exact
+before/after JSON if you want to see the noise that got cut). Only tested
+against 2 real repos so far, not 6 like the Python side — this is
+explicitly a first pass, not yet hardened to the same degree.
