@@ -153,8 +153,60 @@ found). Plus the 6 public repos above for false-positive testing.
    still mostly the self-referential-repo effect, not noise.
 4. ~~Multi-language support (start with JS/TS)~~ — **done as a first pass**,
    see "JS/TS support" below.
-5. Auto-fix: generate the actual code patch and open a PR, once detection
-   has been trusted on more real-world code than just one project.
+5. ~~Auto-fix: generate the actual code patch~~ — **done for a small,
+   deliberately mechanical subset.** See "Auto-fix" below. ("...and open a
+   PR" is now just the `git`/`gh` mechanics on top of a real patch — not
+   attempted against a real third-party repo without being asked to.)
+
+## Auto-fix
+
+`autofix.py` generates real source patches — not suggestions in a report —
+for **5 of the ~19 rules**, chosen because the fix is a pure deletion or a
+1:1 string swap with no judgment call attached (no "which model should
+this migrate to," no "how should this system-prompt instruction be
+phrased," no "which effort level is right here"). Everything else stays
+detection-only on purpose: a wrong regex was already the first act of this
+project (`scan.py`); a wrong auto-fix rewrites someone's actual code, which
+is a worse failure than not fixing it. See the module docstring in
+`autofix.py` for the full list and the reasoning per rule, fixed and
+not-fixed alike.
+
+Every patch goes through one hard gate before it's ever written: the
+patched file must still parse (`ast.parse`) or the patch is refused and
+logged, never applied. That gate mattered for real, immediately — first
+run against a real repo (a copy of `anthropic-cookbook`) hit a genuine bug
+in the edit engine: deleting the *last* keyword argument in a call only
+scanned backward through same-line whitespace looking for the separating
+comma, so when the previous argument was on an earlier line (the common
+one-arg-per-line style), it never found that comma and left the deleted
+argument's own trailing comma orphaned on its own line — invalid syntax.
+The parse gate caught it before anything was written; the practical effect
+was just a silently-skipped fix, not corrupted code. Fixed by mirroring
+the already-correct forward-scanning logic (cross one newline + its
+indentation, not just spaces/tabs on the same line) and re-verified.
+
+**Validated:** `example_project/autofix_test.py` has one call per
+auto-fixable rule plus two calls that must NOT be touched (a deprecated
+model string, a manual thinking budget) — confirmed after fixing: the 5
+fixable ones are gone, the 2 judgment-call ones are untouched, the file
+still parses. Then for real: ran `--write` against a full copy of
+`anthropic-cookbook`. Result: **20 edits across 9 real files**, every
+patched file still parses, and rescanning afterward shows only the 4
+`assistant-prefill-removed` findings left — exactly the ones this tool
+was never supposed to touch. Known gap: the fixer only edits a direct
+keyword argument on the call site itself, not one assembled in a `**kwargs`
+dict elsewhere (the same splat-resolution limitation `ast_scan.py`'s
+*detection* side already handles for reading, but hasn't been extended to
+for writing) — one real `temperature=` finding in cookbook was left
+un-autofixed for exactly this reason, correctly, rather than attempting an
+edit somewhere else in the file it wasn't confident about.
+
+Also fixed along the way: `ast_scan.py` and `scan.py` silently reported
+"no findings" when pointed at a single file instead of a directory
+(`Path(file).rglob("*.py")` returns an empty iterator, not an error) — a
+false "all clear" is the exact failure mode this whole project exists to
+prevent, so worth fixing the moment building/testing `autofix.py` on a
+single file actually hit it.
 
 ## JS/TS support
 

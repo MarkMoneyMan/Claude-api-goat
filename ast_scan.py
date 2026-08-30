@@ -497,8 +497,19 @@ def _finding(path, line, code, rule_id, severity, deadline, title, detail, fix):
 
 def scan_dir(root):
     root = Path(root)
+    # Bug found live building autofix.py: `Path(file).rglob("*.py")` on a
+    # *file* path silently returns an empty iterator, not an error — so
+    # scanning a single file always reported "no findings," even when
+    # there were real ones. A false "all clear" is the one failure mode
+    # this whole project exists to avoid; worth fixing the moment it
+    # actually mattered rather than leaving it as a footgun.
+    if root.is_file():
+        paths = [root] if root.suffix == ".py" else []
+    else:
+        paths = root.rglob("*.py")
+
     all_findings = []
-    for path in root.rglob("*.py"):
+    for path in paths:
         if any(part in SKIP_DIRS for part in path.parts):
             continue
         text = path.read_text(errors="ignore")

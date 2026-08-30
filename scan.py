@@ -98,8 +98,12 @@ def scan_file(path):
 
 def scan_dir(root):
     root = Path(root)
+    # Same fix as ast_scan.py: a file path's .rglob() silently returns
+    # nothing, which used to make scanning a single file always report
+    # "no findings" — a false all-clear, not just a missed one.
+    paths = [root] if root.is_file() and root.suffix == ".py" else (root.rglob("*.py") if root.is_dir() else [])
     all_findings = []
-    for path in root.rglob("*.py"):
+    for path in paths:
         if any(part in SKIP_DIRS for part in path.parts):
             continue
         all_findings.extend(scan_file(path))
