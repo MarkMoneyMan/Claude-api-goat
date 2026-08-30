@@ -330,9 +330,11 @@ mistake described above — that no amount of local YAML validation or
 unit-tested Python logic could have surfaced, because the bug wasn't in
 the YAML wiring or the scanner logic, it was in a *test's assumption*
 about its own fixture. After swapping in `ci_fixtures/known_clean.py`
-and re-pushing, the expectation is both self-check jobs go green; that
-still needs confirming against a second real run before calling this
-settled.
+and re-pushing, run #2 (commit `7a97f7f`) went green on both jobs —
+confirmed end-to-end on real GitHub Actions, not just locally. That's
+the whole point of dogfooding this against a real remote instead of
+stopping at "the YAML looks right": the bug this section describes only
+existed to find because a real run happened.
 
 ## Publishing
 
