@@ -410,9 +410,13 @@ instead of "a scanner someone has to remember to update by hand." It:
 `workflow_dispatch`, then hands off to `peter-evans/create-pull-request`
 — same no-commit-if-nothing-changed pattern as `autofix-weekly.yml`, on
 a fixed branch name so a run before last week's PR merges updates that
-PR instead of opening a duplicate. **Needs a repo secret,
-`ANTHROPIC_API_KEY`, that hasn't been added to the real repo yet** — the
-workflow fails loudly rather than silently skipping if it's missing.
+PR instead of opening a duplicate. Needs a repo secret,
+`ANTHROPIC_API_KEY` — the workflow fails loudly rather than silently
+skipping if it's missing. Also needs the repo's "Allow GitHub Actions to
+create and approve pull requests" setting enabled (Settings → Actions →
+General → Workflow permissions) — without it, `create-pull-request`
+fails even with `pull-requests: write` declared in the workflow itself
+(found the hard way; see below).
 
 **What's tested and how, stated plainly:** this cloud environment's own
 network egress blocks `platform.claude.com` directly (confirmed — a plain
@@ -447,11 +451,43 @@ fast to have called the model, consistent with hitting the "nothing new
 since 2026-08-27" fast path and exiting before ever importing
 `extract_rules`. Confirmed on GitHub afterward: no PR was opened — the
 "nothing changed, don't bother `create-pull-request`" path behaves
-correctly for real, not just in the code reading right. What's still
-genuinely untested: the extraction call itself firing for real, which
-needs an actual new changelog entry to show up — that'll happen on its
-own whenever Anthropic next publishes one and the Monday schedule (or a
-manual run) picks it up.
+correctly for real, not just in the code reading right.
+
+**Update: the extraction call itself has now been tested for real, too**
+— deliberately, not by waiting for Anthropic to publish something new.
+`pipeline_runs/last_synced.json` was rolled back to an earlier date on
+purpose (a small, disclosed, real API cost) so the next run would treat
+already-public content as "new" and actually exercise the model call and
+everything downstream of it. First attempt (`update-rules.yml` run #2)
+crashed: `json.decoder.JSONDecodeError: Invalid \escape`. Root cause: the
+extraction prompt asks the model for a `"pattern"` field containing a raw
+regex, and the model wrote single backslashes (e.g. the literal text
+`\.`) instead of the two backslashes valid JSON requires to represent one
+backslash character. `extract_rules.py` now (a) tells the model
+explicitly, with worked examples, that every backslash in that field must
+be doubled, and (b) repairs any stray single backslash before the first
+parse attempt regardless of whether parsing would otherwise succeed —
+because `\b` specifically is *valid* JSON (it decodes to a backspace
+control character) while meaning something unrelated in regex (word
+boundary), so a repair-only-on-crash design would let that one through
+silently: a rule that looks fine, ships fine, and then just never matches
+anything. Caught a bug in that repair itself during local testing, before
+it ever reached CI — the first version could corrupt an
+already-correctly-escaped `\\b` into `\\\b` — fixed and re-verified
+against all three cases (the crash pattern, the silent-corruption
+pattern, and the already-correct pattern) before redeploying. Second
+attempt (run #3) got past extraction cleanly but failed at a different,
+unrelated step: `peter-evans/create-pull-request` couldn't open a PR —
+"GitHub Actions is not permitted to create or approve pull requests,"
+a repo-level setting (Settings → Actions → General → Workflow
+permissions), not a code bug, even though the workflow already declared
+`pull-requests: write`. Fixed by enabling "Allow GitHub Actions to create
+and approve pull requests" on the repo. Third attempt (run #4) succeeded
+end-to-end in 59s and opened a real PR (`#1`,
+"claude-api-guard: new rules from Anthropic's release notes"), confirmed
+on GitHub. That's the full loop validated for real: fetch → parse →
+extract via the model → dedupe → append → PR, with two real bugs found
+and fixed along the way instead of assumed away.
 
 ## CI / GitHub Action
 
