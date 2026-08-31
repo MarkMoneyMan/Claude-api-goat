@@ -299,13 +299,23 @@ patched file still parsed). `self-check.yml` gained a third job,
 `package-installs-and-runs`, that runs this exact same check on every
 push — so a future change that breaks the installed package (not just
 the scripts run directly) fails CI immediately instead of only showing
-up the next time `autofix-weekly.yml` happens to fire. What's *not* yet
-tested: the actual `git+https://...` install from a real GitHub Actions
-runner against the real private repo (this sandbox can build and
-install the package locally, but doesn't have network access to
-`github.com` to test the git-URL install itself) — that's the same class
-of "only a real run proves it" gap as `sync_rules.py`'s live fetch was,
-now open here instead.
+up the next time `autofix-weekly.yml` happens to fire.
+
+**Update:** ran for real on GitHub Actions — `self-check #9` (commit
+`d8dbe6e`) passed all three jobs, confirming `pip install .` (the build
++ entry-point registration this sandbox couldn't test, no network path
+to `github.com` from here) works correctly on a real Ubuntu runner, not
+just in this sandbox's virtualenv. Being precise about what that does
+and doesn't cover: `self-check.yml` installs from the already-checked-
+out local directory (`pip install .`), which proves the package itself
+is sound. It does **not** exercise `autofix-weekly.yml`'s specific
+`pip install "git+https://x-access-token:...@github.com/..."` line —
+that only fires on the Monday schedule or a manual `workflow_dispatch`,
+neither of which has happened yet. pip's git-URL install and
+token-in-URL auth are both extremely well-trodden mechanisms, so this is
+a small remaining gap, not an unknown one — but per this project's own
+rule of not calling something proven until it's run for real, it stays
+open until `autofix-weekly.yml` actually fires once.
 
 ## JS/TS support
 

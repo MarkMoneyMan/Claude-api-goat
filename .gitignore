@@ -9,3 +9,6 @@ js_findings.json
 # pip/setuptools build artifacts from `pip install .` / `pip install -e .`
 build/
 *.egg-info/
+
+# Local GitHub token for non-interactive push (never committed)
+.github_token
