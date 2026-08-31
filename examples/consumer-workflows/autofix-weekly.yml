@@ -1,6 +1,19 @@
-# TEMPLATE — periodic auto-fix PR for a downstream project. Same
-# publishing caveat as check-on-pr.yml: replace YOUR-GITHUB-USERNAME below
-# once this tool has a real remote.
+# TEMPLATE — periodic auto-fix PR for a downstream project.
+#
+# Different caveat than check-on-pr.yml's, and worth separating clearly:
+# `uses: owner/repo@ref` (an action reference) and `actions/checkout` with
+# `repository:` (cloning a second repo's contents) are governed by two
+# different GitHub mechanisms. The action-reference case in check-on-pr.yml
+# is covered by Claude-api-goat's repo Settings → Actions → Access, and
+# needs nothing extra for a same-account repo like OddsScanner. This
+# workflow's second checkout step below is the other case: the default
+# GITHUB_TOKEN a workflow gets is scoped ONLY to the repo it's running in
+# — it can't read a second private repo, same-account or not, without
+# being handed different credentials. So this step needs a `token:` input
+# pointing at a PAT (fine-grained, "Contents: Read" on Claude-api-goat is
+# enough) stored as a secret in the *downstream* repo, e.g.
+# `CLAUDE_API_GOAT_RO_TOKEN` — set that up in OddsScanner's own repo
+# Settings → Secrets before this workflow will actually run.
 #
 # What it does: once a week (and on-demand via workflow_dispatch), applies
 # the 5 mechanical auto-fixes from autofix.py and opens a PR if anything
@@ -34,9 +47,10 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: YOUR-GITHUB-USERNAME/claude-api-guard
-          ref: main
+          repository: MarkMoneyMan/Claude-api-goat
+          ref: master
           path: claude-api-guard-tool
+          token: ${{ secrets.CLAUDE_API_GOAT_RO_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:

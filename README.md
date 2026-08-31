@@ -310,8 +310,9 @@ of someone running `ast_scan.py` by hand and remembering to. Two pieces:
   a weekly `autofix-weekly.yml` that opens a PR via the well-established
   `peter-evans/create-pull-request` action when `autofix.py` finds
   something to fix) showing how a *downstream* project would wire this
-  in. Marked `YOUR-GITHUB-USERNAME/claude-api-guard@main` as a literal
-  placeholder — see "Publishing" below for what that actually needs.
+  in. Now point at the real `MarkMoneyMan/Claude-api-goat@master`
+  instead of a placeholder — see "Publishing" below for the access
+  caveats that come with that repo being private.
 
 **What's validated and what isn't, stated plainly:** all 4 YAML files
 parse as valid YAML, and the Python logic each step actually calls
@@ -343,7 +344,25 @@ Published to a real (private) GitHub repository:
 rounds of Personal Access Token permission fixes — GitHub refuses to let
 a token without "Workflows" scope push changes to `.github/workflows/*`,
 even if it already has "Contents: Read and write" — which isn't obvious
-until the push is rejected with that exact error. Both the Action itself
-and the consumer-workflow templates still reference the placeholder
-`YOUR-GITHUB-USERNAME/claude-api-guard@main`; updating those to the real
-`MarkMoneyMan/Claude-api-goat@main` is a remaining step, not yet done.
+until the push is rejected with that exact error.
+
+Both consumer-workflow templates now point at the real
+`MarkMoneyMan/Claude-api-goat@master` instead of the old
+`YOUR-GITHUB-USERNAME` placeholder, but "private" isn't free to work
+around — two different mechanisms are involved, and they were kept
+separate deliberately rather than papered over:
+
+- `check-on-pr.yml`'s `uses: MarkMoneyMan/Claude-api-goat@master` (an
+  *action reference*) works for a same-account repo like OddsScanner with
+  no extra setup — GitHub's repo Settings → Actions → General → "Access"
+  on Claude-api-goat covers this case, and same-account repos get it by
+  default.
+- `autofix-weekly.yml`'s `actions/checkout` step with
+  `repository: MarkMoneyMan/Claude-api-goat` (*cloning a second repo's
+  contents*, to get `autofix.py` itself) is a different mechanism — the
+  default `GITHUB_TOKEN` a workflow run gets is scoped only to the repo
+  it's running in, same-account or not. That step needs a `token:` input
+  pointing at a PAT (read-only "Contents" scope on Claude-api-goat is
+  enough) stored as a secret in the *downstream* repo. Not yet set up in
+  OddsScanner — that's the actual remaining step now, not the placeholder
+  swap.
