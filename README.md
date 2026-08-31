@@ -346,10 +346,13 @@ exercised with a pre-fetched copy of the page before this), and that the
 secret is read correctly. The 14s runtime is itself informative: too
 fast to have called the model, consistent with hitting the "nothing new
 since 2026-08-27" fast path and exiting before ever importing
-`extract_rules`. What's still genuinely untested: the extraction call
-itself firing for real, which needs an actual new changelog entry to
-show up — that'll happen on its own whenever Anthropic next publishes
-one and the Monday schedule (or a manual run) picks it up.
+`extract_rules`. Confirmed on GitHub afterward: no PR was opened — the
+"nothing changed, don't bother `create-pull-request`" path behaves
+correctly for real, not just in the code reading right. What's still
+genuinely untested: the extraction call itself firing for real, which
+needs an actual new changelog entry to show up — that'll happen on its
+own whenever Anthropic next publishes one and the Monday schedule (or a
+manual run) picks it up.
 
 ## CI / GitHub Action
 
