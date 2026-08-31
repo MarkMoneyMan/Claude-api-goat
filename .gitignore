@@ -5,4 +5,7 @@ report*.json
 claude-api-guard-findings.json
 py_findings.json
 js_findings.json
-.github_token
+
+# pip/setuptools build artifacts from `pip install .` / `pip install -e .`
+build/
+*.egg-info/

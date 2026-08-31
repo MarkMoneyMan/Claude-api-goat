@@ -204,6 +204,10 @@ Plus the 6 public repos above for false-positive testing.
    hand")~~ — **done.** `sync_rules.py` + `.github/workflows/update-rules.yml`
    run this on a schedule now instead of a human copy-pasting changelog
    text into a file. See "Rule sync" below.
+8. ~~Package `autofix.py` as something installable, instead of
+   `autofix-weekly.yml` checking out this whole repo for one file~~ —
+   **done.** `pyproject.toml` + two console-script entry points; see
+   "Packaging" under "Auto-fix" below for what that did and didn't fix.
 
 ## Auto-fix
 
@@ -254,6 +258,54 @@ Also fixed along the way: `ast_scan.py` and `scan.py` silently reported
 false "all clear" is the exact failure mode this whole project exists to
 prevent, so worth fixing the moment building/testing `autofix.py` on a
 single file actually hit it.
+
+### Packaging
+
+`autofix-weekly.yml` used to check out this tool's *whole repo* into a
+subfolder next to the consumer project, just to reach one file
+(`claude-api-guard-tool/autofix.py`) — noted at the time as a known gap.
+Closed now: `pyproject.toml` packages `rules.py`, `ast_scan.py`, and
+`autofix.py` as an installable `claude-api-guard` package with two
+console-script entry points, `claude-api-guard-scan` and
+`claude-api-guard-autofix`. `autofix-weekly.yml` now does `pip install
+"git+https://x-access-token:${TOKEN}@github.com/MarkMoneyMan/Claude-api-goat.git@master"`
+and runs `claude-api-guard-autofix repo --write` — one step instead of
+two, and no more reaching into a sibling checkout's file path by hand.
+
+**One deliberate tradeoff, stated plainly rather than hidden:** the
+package is flat top-level modules (`rules`, `ast_scan`, `autofix`), not
+a `claude_api_guard/` namespace package. That's not an oversight — those
+three files already import each other with bare names
+(`from rules import RULES`, `from ast_scan import ...`), and `action.yml`
++ `self-check.yml` + `sync_rules.py` all already run them as plain
+top-level scripts by path. Packaging them as-is meant **zero** import
+changes and zero risk to any of that already-working, already-tested
+machinery — the actual cost is that "rules", "ast_scan", and "autofix"
+are generic names that could collide with something else in a shared
+Python environment. Acceptable here because the only realistic install
+path is a fresh, ephemeral CI job installing straight from this private
+repo, not a shared environment — but a real `claude_api_guard/` layout
+(with relative imports, and `action.yml`/`sync_rules.py` updated to
+match) would be the right fix before this goes anywhere wider than that.
+
+**Validated:** installed into a clean virtualenv from this checkout
+(`pip install -e .` first, then `pip install .` to mirror what CI
+actually does) and run from a directory with no copy of this repo in it
+at all — both console scripts produced byte-identical results to running
+the scripts directly (`claude-api-guard-scan` found the same 4 known
+`example_project/` findings and exited 1; `claude-api-guard-autofix`
+produced the same 7 edits against a copy of `autofix_test.py`, and the
+patched file still parsed). `self-check.yml` gained a third job,
+`package-installs-and-runs`, that runs this exact same check on every
+push — so a future change that breaks the installed package (not just
+the scripts run directly) fails CI immediately instead of only showing
+up the next time `autofix-weekly.yml` happens to fire. What's *not* yet
+tested: the actual `git+https://...` install from a real GitHub Actions
+runner against the real private repo (this sandbox can build and
+install the package locally, but doesn't have network access to
+`github.com` to test the git-URL install itself) — that's the same class
+of "only a real run proves it" gap as `sync_rules.py`'s live fetch was,
+now open here instead.
 
 ## JS/TS support
 

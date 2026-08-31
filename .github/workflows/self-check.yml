@@ -1,11 +1,13 @@
 name: self-check
 
-# Dogfoods action.yml against this repo itself, on every push/PR. Two
-# jobs, both are really assertions about the action's own correctness
-# (not about this repo's code health): one path is known to contain real
-# findings and must fail the severity gate, the other is known to be
-# clean and must pass it. If either assumption stops holding, that's the
-# action's behavior regressing, not a real finding to triage.
+# Dogfoods action.yml against this repo itself, on every push/PR. Three
+# jobs, all really assertions about the tool's own correctness (not about
+# this repo's code health): one path is known to contain real findings
+# and must fail the severity gate, one is known to be clean and must pass
+# it, and one installs the pip package (pyproject.toml) fresh and checks
+# the installed console scripts behave the same as running the scripts
+# directly. If any assumption stops holding, that's a regression to fix,
+# not a real finding to triage.
 
 on:
   push:
@@ -49,3 +51,34 @@ jobs:
             exit 1
           fi
           echo "OK: 0 findings on the known-clean fixture, as expected."
+
+  package-installs-and-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install claude-api-guard from this checkout (pyproject.toml)
+        run: pip install .
+      - name: Run the installed claude-api-guard-scan against example_project/
+        id: scan
+        continue-on-error: true
+        run: claude-api-guard-scan example_project/
+      - name: Assert it found the known HIGH findings (nonzero exit)
+        run: |
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "::error::Expected the installed claude-api-guard-scan to exit non-zero against example_project/ (it has known findings), but the step outcome was '${{ steps.scan.outcome }}'."
+            exit 1
+          fi
+          echo "OK: installed console script found and reported the known findings."
+      - name: Assert the installed claude-api-guard-autofix produces a working patch
+        run: |
+          cp example_project/autofix_test.py /tmp/autofix_smoke_test.py
+          claude-api-guard-autofix /tmp/autofix_smoke_test.py --write
+          if diff -q example_project/autofix_test.py /tmp/autofix_smoke_test.py > /dev/null; then
+            echo "::error::Expected claude-api-guard-autofix to change /tmp/autofix_smoke_test.py, but it made no edits."
+            exit 1
+          fi
+          python3 -c "import ast; ast.parse(open('/tmp/autofix_smoke_test.py').read())"
+          echo "OK: installed autofix console script produced a patch that still parses."

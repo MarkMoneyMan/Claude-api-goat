@@ -1,18 +1,16 @@
 # TEMPLATE — periodic auto-fix PR for a downstream project.
 #
-# Different caveat than check-on-pr.yml's, and worth separating clearly:
-# `uses: owner/repo@ref` (an action reference) and `actions/checkout` with
-# `repository:` (cloning a second repo's contents) are governed by two
-# different GitHub mechanisms. The action-reference case in check-on-pr.yml
-# is covered by Claude-api-goat's repo Settings → Actions → Access, and
-# needs nothing extra for a same-account repo like OddsScanner. This
-# workflow's second checkout step below is the other case: the default
-# GITHUB_TOKEN a workflow gets is scoped ONLY to the repo it's running in
-# — it can't read a second private repo, same-account or not, without
-# being handed different credentials. So this step needs a `token:` input
-# pointing at a PAT (fine-grained, "Contents: Read" on Claude-api-goat is
-# enough) stored as a secret in the *downstream* repo, e.g.
-# `CLAUDE_API_GOAT_RO_TOKEN` — set that up in OddsScanner's own repo
+# Same access caveat as check-on-pr.yml's, still worth restating: cloning
+# or installing from a second private repo is a DIFFERENT GitHub mechanism
+# than the `uses: owner/repo@ref` action reference in check-on-pr.yml (that
+# one's covered by Claude-api-goat's repo Settings → Actions → Access, and
+# needs nothing extra for a same-account repo like OddsScanner). The `pip
+# install` step below is the other case: the default GITHUB_TOKEN a
+# workflow gets is scoped ONLY to the repo it's running in — it can't pull
+# from a second private repo, same-account or not, without different
+# credentials. So this step needs a PAT (fine-grained, "Contents: Read" on
+# Claude-api-goat is enough) stored as a secret in the *downstream* repo,
+# e.g. `CLAUDE_API_GOAT_RO_TOKEN` — set that up in OddsScanner's own repo
 # Settings → Secrets before this workflow will actually run.
 #
 # What it does: once a week (and on-demand via workflow_dispatch), applies
@@ -22,10 +20,11 @@
 # PR-opening code needed, and it already no-ops cleanly when there's
 # nothing to fix.
 #
-# Known gap, stated plainly: autofix.py isn't published as an installable
-# package yet (no PyPI release), so this checks out the tool's own repo
-# into a subfolder alongside the consumer repo, rather than `pip install`-
-# ing it. Works, but a real package would be cleaner — see README.md.
+# Now installs claude-api-guard as a real package instead of checking out
+# the tool's whole repo into a subfolder just to reach one file — see
+# pyproject.toml and README's "Packaging" section for what that involved
+# and its one stated tradeoff (flat top-level module names, not yet a
+# claude_api_guard/ namespace).
 
 name: claude-api-guard autofix
 
@@ -45,19 +44,18 @@ jobs:
         with:
           path: repo
 
-      - uses: actions/checkout@v4
-        with:
-          repository: MarkMoneyMan/Claude-api-goat
-          ref: master
-          path: claude-api-guard-tool
-          token: ${{ secrets.CLAUDE_API_GOAT_RO_TOKEN }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Install claude-api-guard from its private repo
+        env:
+          CLAUDE_API_GOAT_RO_TOKEN: ${{ secrets.CLAUDE_API_GOAT_RO_TOKEN }}
+        run: |
+          pip install "git+https://x-access-token:${CLAUDE_API_GOAT_RO_TOKEN}@github.com/MarkMoneyMan/Claude-api-goat.git@master"
+
       - name: Apply mechanical auto-fixes
-        run: python3 claude-api-guard-tool/autofix.py repo --write
+        run: claude-api-guard-autofix repo --write
 
       - uses: peter-evans/create-pull-request@v6
         with:
