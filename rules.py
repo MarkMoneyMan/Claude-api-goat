@@ -232,3 +232,100 @@ NEW_RULES = [
 ]
 
 RULES = RULES + NEW_RULES
+
+
+# --- Auto-extracted by sync_rules.py from release notes through 2026-08-27 ---
+RULES_AUTO_20260827 = [
+    {
+        'id': 'claude-opus-4-1-retired',
+        'pattern': r"claude-opus-4-1-20250805",
+        'applies_if_model': ['claude-opus-4-1-20250805'],
+        'severity': 'HIGH',
+        'deadline': '2026-08-05',
+        'title': 'Claude Opus 4.1 model retired — all API requests now return an error',
+        'detail': 'The model `claude-opus-4-1-20250805` has been retired. Any API request specifying this model ID will now return an error rather than a response. The changelog recommends upgrading to Claude Opus 5.',
+        'fix': 'Replace all references to `claude-opus-4-1-20250805` with `claude-opus-5` (or the appropriate versioned Opus 5 model ID) in your API calls.',
+    },
+    {
+        'id': 'computer-use-tool-ga-shape-change',
+        'pattern': r"computer_20251124",
+        'applies_if_model': None,
+        'severity': 'HIGH',
+        'deadline': '2026-08-19',
+        'title': 'Computer use tool GA (`computer_toolset_20260801`) changes request shape and tool handling vs. beta',
+        'detail': 'The computer use tool is now generally available as `computer_toolset_20260801`, which introduces batch actions, zoom enabled by default, and per-member configuration via `configs`. The changelog explicitly warns that upgrading an existing integration changes the request shape and tool handling, and links to a migration guide.',
+        'fix': 'Follow the official migration guide at the `#migrate-from-computer-20251124` docs section to update your request payloads and tool-handling code before switching to `computer_toolset_20260801`.',
+    },
+    {
+        'id': 'files-api-beta-header-response-format-change',
+        'pattern': r"files-api-2025-04-14",
+        'applies_if_model': None,
+        'severity': 'MEDIUM',
+        'deadline': '2026-08-19',
+        'title': 'Files API GA: requests without the beta header now return a different response format',
+        'detail': 'The Files API is out of beta; requests to `/v1/files` and Messages API requests referencing uploaded files that omit the `files-api-2025-04-14` beta header now return the new GA response format (including `expires_at`, new pagination fields `page`/`next_page`, and an `ids[]` filter). Code that drops the header but still expects the old response shape will silently misbehave.',
+        'fix': 'Keep sending the `files-api-2025-04-14` beta header to preserve the old response format, or update your response-parsing code to handle the new GA format and then remove the header.',
+    },
+    {
+        'id': 'skills-api-beta-header-delete-behavior-change',
+        'pattern': r"skills-2025-10-02",
+        'applies_if_model': None,
+        'severity': 'MEDIUM',
+        'deadline': '2026-08-27',
+        'title': 'SDK `client.beta.skills` no longer sends beta header; `delete()` now deletes all versions',
+        'detail': 'In the listed SDK versions (Python 1.2.0, TypeScript 0.122.0, Go 1.68.0, Java 2.59.0, Ruby 1.67.0, C# 12.44.0), `client.beta.skills` stops sending the `skills-2025-10-02` beta header. As a result, `client.beta.skills.delete()` now deletes a Skill together with all its versions rather than just one, which is a silent and destructive behavior change for code that expected the old scoped-delete semantics.',
+        'fix': 'Audit all calls to `client.beta.skills.delete()` and ensure your code accounts for the fact that it will now delete the Skill and every version; migrate to `client.skills` explicitly and update version-management logic accordingly.',
+    },
+    {
+        'id': 'sdk-beta-skill-type-renamed',
+        'pattern': r"BetaSkill\b",
+        'applies_if_model': None,
+        'severity': 'MEDIUM',
+        'deadline': '2026-08-27',
+        'title': 'Beta Messages type `BetaSkill` renamed to `BetaContainerSkill` in affected SDKs',
+        'detail': 'In the same SDK releases (Python 1.2.0, TypeScript 0.122.0, Go 1.68.0, Java 2.59.0, Ruby 1.67.0, C# 12.44.0), the type previously called `BetaSkill` (the container Skill reference in the beta Messages types) is renamed to `BetaContainerSkill`. Code that references the old type name by string or import will break at compile time or runtime.',
+        'fix': 'Find all uses of `BetaSkill` in your codebase and rename them to `BetaContainerSkill` when upgrading to the affected SDK versions.',
+    },
+    {
+        'id': 'python-sdk-v1-python-version',
+        'pattern': r"python_requires",
+        'applies_if_model': None,
+        'severity': 'HIGH',
+        'deadline': '2026-08-20',
+        'title': 'Python SDK v1.0 requires Python 3.10 or later',
+        'detail': 'Python SDK v1.0 drops support for Python versions earlier than 3.10. Applications running on Python 3.8 or 3.9 will be unable to install or use the new SDK version.',
+        'fix': 'Upgrade your Python runtime to 3.10 or later before updating to Python SDK v1.0.',
+    },
+    {
+        'id': 'python-sdk-v1-text-completions-removed',
+        'pattern': r"(?:completions\.create|Completion|text_completion)",
+        'applies_if_model': None,
+        'severity': 'HIGH',
+        'deadline': '2026-08-20',
+        'title': 'Python SDK v1.0 removes legacy Text Completions API surface',
+        'detail': 'Python SDK v1.0 removes the long-deprecated Text Completions API. Any code that calls the legacy completions endpoint through the SDK will break after upgrading.',
+        'fix': 'Migrate all Text Completions API calls to the Messages API before upgrading to Python SDK v1.0.',
+    },
+    {
+        'id': 'python-sdk-v1-messages-params-removed',
+        'pattern': r"(?:temperature|top_p|top_k)\s*=",
+        'applies_if_model': None,
+        'severity': 'HIGH',
+        'deadline': '2026-08-20',
+        'title': 'Python SDK v1.0 removes `temperature`, `top_p`, and `top_k` parameters on Messages methods',
+        'detail': 'Python SDK v1.0 removes the `temperature`, `top_p`, and `top_k` parameters from Messages API method signatures. Code that passes these parameters will raise an error after upgrading.',
+        'fix': 'Remove `temperature`, `top_p`, and `top_k` keyword arguments from all Messages API calls in your codebase before upgrading to Python SDK v1.0.',
+    },
+    {
+        'id': 'python-sdk-v1-async-raw-response-parse',
+        'pattern': r"\.with_raw_response",
+        'applies_if_model': None,
+        'severity': 'HIGH',
+        'deadline': '2026-08-20',
+        'title': 'Python SDK v1.0 async client: `.with_raw_response` results now require `await response.parse()`',
+        'detail': 'On the async client in Python SDK v1.0, results returned by `.with_raw_response` must now be awaited with `await response.parse()`. Code that calls `.parse()` without `await` will silently return a coroutine instead of the parsed value.',
+        'fix': 'Update all async code that calls `.parse()` on a `.with_raw_response` result to use `await response.parse()`.',
+    },
+]
+
+RULES = RULES + RULES_AUTO_20260827
