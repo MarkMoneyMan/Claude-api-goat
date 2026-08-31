@@ -337,14 +337,19 @@ correctly skips a rule whose id already exists, keeps a genuinely new
 one, appends a block that keeps `rules.py` parsing as valid Python, and
 the newly appended rule is immediately usable by `ast_scan.py` — it
 found the synthetic rule's trigger pattern in a test fixture, same as any
-hand-written rule would. What's *not* yet tested: an actual GitHub
-Actions run of `update-rules.yml` (needs the `ANTHROPIC_API_KEY` secret
-added to the repo first) and a real week where the changelog actually has
-something new in it — right now the live page has nothing newer than
-`last_synced.json`'s bootstrapped 2026-08-27, so the first real run,
-whenever it happens, will correctly report "nothing new" rather than
-proving the extraction path fires for real. That's the actual open
-validation gap here, not a design one.
+hand-written rule would. **Update:** ran for real on GitHub Actions
+(`update-rules.yml` run #1, `workflow_dispatch`, after the
+`ANTHROPIC_API_KEY` secret was added) — succeeded in 14s. That confirms
+the actual `fetch_changelog_markdown()` HTTP call works from a real
+runner (this sandbox's own egress blocks it, so it had only ever been
+exercised with a pre-fetched copy of the page before this), and that the
+secret is read correctly. The 14s runtime is itself informative: too
+fast to have called the model, consistent with hitting the "nothing new
+since 2026-08-27" fast path and exiting before ever importing
+`extract_rules`. What's still genuinely untested: the extraction call
+itself firing for real, which needs an actual new changelog entry to
+show up — that'll happen on its own whenever Anthropic next publishes
+one and the Monday schedule (or a manual run) picks it up.
 
 ## CI / GitHub Action
 
