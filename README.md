@@ -42,6 +42,16 @@ an `ANTHROPIC_API_KEY` to run for real.
   (confirmed: this is why `aider` shows 0 findings — it talks to Claude
   through `litellm`, not the Anthropic SDK directly, so there's nothing
   for this tool to see there yet).
+- Structurally blind to raw-HTTP integrations (a hand-built JSON body
+  POSTed straight to `api.anthropic.com`, no official SDK in the call
+  path at all) — every rule matches an SDK call *shape*, so there's
+  nothing for the AST walk to find. Confirmed twice now, not just
+  theorized: litellm's own Anthropic integration (HTTP-level, not
+  SDK-level) and a legacy Node.js prototype inside `oddsscanner`
+  (`server.js`) both produce 0 findings for this reason, not because
+  they're actually safe. A future rule format that also matches literal
+  header/param strings in a raw request body could close part of this,
+  but nothing like that exists yet.
 - Python only for detection; JS/TS added as a first pass (see below), no
   Go/other-language support.
 - Rule *sync* runs on a schedule now (`sync_rules.py` +
@@ -50,9 +60,36 @@ an `ANTHROPIC_API_KEY` to run for real.
 
 ## Validated against
 
-Real code: `/Users/markus/Desktop/oddsscanner` (clean — SDK pinned to
-0.28.0, pre-v1.0, so the SDK-v1.0 rules don't apply yet; no other issues
-found). Plus the 6 public repos above for false-positive testing.
+Real code: `/Users/markus/Desktop/oddsscanner`, re-run directly (not
+through CI — that repo has no `.git` yet) against the full current rule
+set, Python and JS both, once the rule sync work above made the rule
+count grow well past the original 6.
+
+- **`app.py` (the live backend — `start.sh`/`start.bat` both run this,
+  port 5000):** clean. Confirmed by reading the actual call site, not
+  just trusting the scanner: `anthropic.Anthropic(...)`,
+  `client.messages.create(model="claude-sonnet-4-6", max_tokens=...,
+  system=[...], messages=[...])` — no temperature/top_p/top_k, no
+  `.with_raw_response`, no beta headers, no `AnthropicBedrock`. SDK is
+  pinned to `anthropic==0.28.0`, well below v1.0, so the SDK-v1.0 rules
+  correctly don't fire yet — this is a true negative, not a blind spot.
+- **`server.js` + `index.html` (an older Node.js prototype, both dated
+  well before `app.py` and `static/index.html`, and not what
+  `start.sh`/`start.bat` actually launch):** also 0 findings, but for a
+  reason worth stating plainly rather than taking credit for: this code
+  never calls the Anthropic SDK at all. It hand-builds a JSON body and
+  POSTs it to `https://api.anthropic.com/v1/messages` with Node's raw
+  `https` module. Every rule in `rules_js.js` matches SDK call *shapes*
+  (`.messages.create(...)`, `.beta.files`, ...), so there is structurally
+  nothing here for it to match — the same class of blind spot already
+  documented for litellm's own Anthropic integration, now confirmed in a
+  second, real, personally-used codebase rather than just a public one.
+  Concretely: this dead path has a hardcoded, dated model snapshot
+  (`claude-sonnet-4-20250514`) that a raw-HTTP-aware rule set would
+  reasonably flag someday — worth knowing about even though it's not
+  live traffic today.
+
+Plus the 6 public repos above for false-positive testing.
 
 ## Next steps, roughly in priority order
 
