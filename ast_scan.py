@@ -26,7 +26,18 @@ import re
 import sys
 from pathlib import Path
 
-from rules import RULES
+from rules import RULES as _RULES_ANTHROPIC
+from rules_openai import RULES_OPENAI as _RULES_OPENAI
+
+# A rule with no "provider" key is an Anthropic rule — every entry in
+# rules.py predates this field, and it would be needless busywork (and
+# needless risk to code that's already been validated against 6 real
+# repos) to go back and add "provider": "anthropic" to all 18 of them by
+# hand. New provider rule files (rules_openai.py and whatever comes after
+# it) are required to set it explicitly instead.
+for _rule in _RULES_ANTHROPIC:
+    _rule.setdefault("provider", "anthropic")
+RULES = _RULES_ANTHROPIC + _RULES_OPENAI
 
 SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build"}
 
@@ -193,6 +204,55 @@ def file_references_anthropic(tree):
     return False
 
 
+def _openai_import_is_type_only(module_name):
+    """True for openai.types(...) — OpenAI's own submodule of shared
+    Pydantic request/response schema definitions, imported for typing
+    convenience, not client behavior.
+
+    Real bug, found testing against litellm (not guessed): litellm
+    normalizes every provider's response into an "OpenAI-shaped" object,
+    so its Vertex AI (Google) image-generation handler does
+    `from openai.types.image import Image` purely to reuse that shared
+    return-type shape — a file with zero actual OpenAI-client code in it
+    at all. The naive "imports anything under openai.*" check (a direct
+    copy of file_references_anthropic, which has no equivalent gotcha
+    because Anthropic's SDK doesn't get reused as a cross-provider type
+    vocabulary the same way) treated that as "this file could contain
+    OpenAI SDK code" and wrongly let the httpx-to-httpx2 rule fire on
+    Vertex AI code that will never construct an OpenAI client, let alone
+    a custom httpx one.
+    """
+    if module_name == "openai":
+        return False  # bare "openai" is the real package/client, not a types import
+    rest = module_name[len("openai."):] if module_name.startswith("openai.") else module_name
+    return rest == "types" or rest.startswith("types.")
+
+
+def file_references_openai(tree):
+    """Same idea as file_references_anthropic, for the `openai` package —
+    but NOT a blind copy: see _openai_import_is_type_only for the one
+    real gotcha found testing this against litellm that has no Anthropic
+    equivalent. Kept as its own function rather than a shared
+    file_references_package(tree, name) helper for the same reason noted
+    there — the two providers' ecosystems have turned out to have
+    different-shaped gotchas, and a premature shared abstraction risks
+    quietly hiding whichever one a future provider's doesn't share.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "openai":
+                    return True
+                if alias.name.startswith("openai.") and not _openai_import_is_type_only(alias.name):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and node.module == "openai":
+                return True
+            if node.level == 0 and node.module and node.module.startswith("openai.") and not _openai_import_is_type_only(node.module):
+                return True
+    return False
+
+
 def build_async_context_map(tree):
     """Map id(node) -> True if node sits inside an `async def` function body
     (nearest enclosing FunctionDef/AsyncFunctionDef wins; a sync function
@@ -244,6 +304,10 @@ GENERIC_EXTRA_CONDITIONS = {
     # package) in any of them — same root cause as the kwargs-handling
     # dead-end documented elsewhere in this README.
     "python-sdk-v1-httpx-to-httpx2": lambda node, snippet, tree_ctx: tree_ctx["references_anthropic"],
+    # Same reasoning, same shape, for OpenAI's own httpx-to-httpx2 move —
+    # httpx is exactly as generic a library from OpenAI-consuming code's
+    # point of view as it was from Anthropic-consuming code's.
+    "openai-httpx-to-httpx2": lambda node, snippet, tree_ctx: tree_ctx["references_openai"],
 }
 
 
@@ -274,6 +338,7 @@ def generic_scan(tree, path, rules):
     tree_ctx = {
         "async_map": build_async_context_map(tree),
         "references_anthropic": file_references_anthropic(tree),
+        "references_openai": file_references_openai(tree),
     }
 
     findings = []
