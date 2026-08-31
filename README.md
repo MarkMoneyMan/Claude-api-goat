@@ -28,10 +28,12 @@ break) because of a known, dated API change.
 
 ## Rules
 
-`rules.py` holds the current rule set, hand-extracted from Anthropic's
-live release notes (as of 2026-08-27). `extract_rules.py` is the designed
-(but not yet automated) path to generating these from the changelog via
-an LLM call instead of by hand — needs an `ANTHROPIC_API_KEY` to run.
+`rules.py` holds the current rule set: 10 hand-extracted from Anthropic's
+live release notes (as of 2026-08-27), plus whatever `sync_rules.py` has
+appended automatically since. `extract_rules.py` is the LLM-extraction
+step itself (changelog text in, structured rules out); `sync_rules.py`
+is what actually runs it unattended — see "Rule sync" below. Both need
+an `ANTHROPIC_API_KEY` to run for real.
 
 ## Known limitations (be honest about these before building further)
 
@@ -40,9 +42,11 @@ an LLM call instead of by hand — needs an `ANTHROPIC_API_KEY` to run.
   (confirmed: this is why `aider` shows 0 findings — it talks to Claude
   through `litellm`, not the Anthropic SDK directly, so there's nothing
   for this tool to see there yet).
-- Python only. No JS/TS/Go support.
-- Rules are still hand-maintained, not yet auto-generated on a schedule.
-- No auto-fix / PR generation yet — detection only.
+- Python only for detection; JS/TS added as a first pass (see below), no
+  Go/other-language support.
+- Rule *sync* runs on a schedule now (`sync_rules.py` +
+  `update-rules.yml`), but every extracted rule still goes through a PR a
+  human reviews before it's live — deliberately not fully unattended.
 
 ## Validated against
 
@@ -157,6 +161,12 @@ found). Plus the 6 public repos above for false-positive testing.
    deliberately mechanical subset.** See "Auto-fix" below. ("...and open a
    PR" is now just the `git`/`gh` mechanics on top of a real patch — not
    attempted against a real third-party repo without being asked to.)
+6. ~~Package as a CI Action~~ — **done**, and it found a real bug on its
+   first real Actions run. See "CI / GitHub Action" below.
+7. ~~Automate the rule-extraction step end-to-end (not just "ran once by
+   hand")~~ — **done.** `sync_rules.py` + `.github/workflows/update-rules.yml`
+   run this on a schedule now instead of a human copy-pasting changelog
+   text into a file. See "Rule sync" below.
 
 ## Auto-fix
 
@@ -273,6 +283,68 @@ deprecated-model-string literal, etc. — see git history for the exact
 before/after JSON if you want to see the noise that got cut). Only tested
 against 2 real repos so far, not 6 like the Python side — this is
 explicitly a first pass, not yet hardened to the same degree.
+
+## Rule sync
+
+`sync_rules.py` is what actually makes this project "self-maintaining"
+instead of "a scanner someone has to remember to update by hand." It:
+
+1. fetches `https://platform.claude.com/docs/en/release-notes/overview.md`
+   — appending `.md` to a `platform.claude.com/docs/...` URL returns raw
+   markdown instead of the rendered page, found by trying it, not
+   documented anywhere, and much easier to parse reliably than scraping
+   HTML;
+2. splits it into dated sections and keeps only the ones newer than
+   `pipeline_runs/last_synced.json`'s stored date, so a weekly run doesn't
+   re-fetch and re-pay for the same 2+ years of history every time;
+3. hands just the new text to `extract_rules.py`'s `extract()` — the same
+   extraction used for the one-off manual run that seeded `rules.py`;
+4. drops any extracted rule whose `id` already exists in `rules.py`
+   (defense against the same change getting described slightly
+   differently on a re-run);
+5. appends whatever's left as a new dated block (`RULES_AUTO_<date> = [...]`
+   `RULES = RULES + RULES_AUTO_<date>`), and advances the synced-through
+   date regardless of whether anything new was found, so a week with only
+   additive (non-breaking) changes doesn't get re-processed forever.
+
+`.github/workflows/update-rules.yml` runs it weekly (Mondays) and on
+`workflow_dispatch`, then hands off to `peter-evans/create-pull-request`
+— same no-commit-if-nothing-changed pattern as `autofix-weekly.yml`, on
+a fixed branch name so a run before last week's PR merges updates that
+PR instead of opening a duplicate. **Needs a repo secret,
+`ANTHROPIC_API_KEY`, that hasn't been added to the real repo yet** — the
+workflow fails loudly rather than silently skipping if it's missing.
+
+**What's tested and how, stated plainly:** this cloud environment's own
+network egress blocks `platform.claude.com` directly (confirmed — a plain
+`curl` and `urllib.request` both get rejected by the sandbox's proxy, an
+environment restriction, not a bug in the fetch code), so the actual
+`fetch_changelog_markdown()` HTTP call hasn't run inside this box. It has
+been tested with the *real* page content, though: `WebFetch` (which goes
+through a different path) pulled the live `.md` page directly, and that
+real output — all 135 dated sections back to May 2024 — was fed through
+the parser and dedupe/merge logic directly. That's how a real bug got
+caught before this ever ran unattended: older entries use ordinal day
+suffixes ("`April 9th, 2025`", "`March 31st, 2025`") that `strptime`
+can't parse, while recent ones don't ("`August 27, 2026`") — the first
+version silently dropped every suffixed section instead of erroring,
+which would have been a **quiet under-processing bug**, not a crash (the
+exact failure shape this whole project tries to catch in *other* code).
+Fixed by stripping the suffix before parsing; re-tested against the same
+135 sections, all parse correctly now. Separately verified end-to-end
+with synthetic candidate rules (bypassing the real API call): dedup
+correctly skips a rule whose id already exists, keeps a genuinely new
+one, appends a block that keeps `rules.py` parsing as valid Python, and
+the newly appended rule is immediately usable by `ast_scan.py` — it
+found the synthetic rule's trigger pattern in a test fixture, same as any
+hand-written rule would. What's *not* yet tested: an actual GitHub
+Actions run of `update-rules.yml` (needs the `ANTHROPIC_API_KEY` secret
+added to the repo first) and a real week where the changelog actually has
+something new in it — right now the live page has nothing newer than
+`last_synced.json`'s bootstrapped 2026-08-27, so the first real run,
+whenever it happens, will correctly report "nothing new" rather than
+proving the extraction path fires for real. That's the actual open
+validation gap here, not a design one.
 
 ## CI / GitHub Action
 
