@@ -22,7 +22,7 @@ import sys
 import anthropic
 
 EXTRACTION_PROMPT = """You are reviewing a page of raw API changelog/release-note text \
-from an API provider (in this case, Anthropic's Claude API). Your job is to find every \
+from an API provider (in this case, {provider_label}). Your job is to find every \
 entry that describes a BREAKING change — something that would make existing client code \
 stop working, start erroring, or silently misbehave. Ignore purely additive features \
 (new endpoints, new optional parameters, new models with no removed behavior).
@@ -119,13 +119,23 @@ def _repair_stray_backslashes(s):
     return "".join(out)
 
 
-def extract(changelog_text, model="claude-sonnet-4-6"):
+def extract(changelog_text, model="claude-sonnet-4-6", provider_label="Anthropic's Claude API"):
+    """provider_label goes straight into the prompt the model sees, so it
+    correctly frames what it's reading (and what "the SDK" means in its
+    own output) — added when this stopped being Anthropic-only. Defaults
+    to the original wording so existing callers (and the one-off manual
+    run that seeded rules.py) don't need to change."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
     response = client.messages.create(
         model=model,
         max_tokens=8192,
         messages=[
-            {"role": "user", "content": EXTRACTION_PROMPT.format(changelog_text=changelog_text)}
+            {
+                "role": "user",
+                "content": EXTRACTION_PROMPT.format(
+                    changelog_text=changelog_text, provider_label=provider_label
+                ),
+            }
         ],
     )
     raw = response.content[0].text

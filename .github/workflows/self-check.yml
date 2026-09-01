@@ -1,11 +1,13 @@
 name: self-check
 
-# Dogfoods action.yml against this repo itself, on every push/PR. Three
+# Dogfoods action.yml against this repo itself, on every push/PR. Four
 # jobs, all really assertions about the tool's own correctness (not about
-# this repo's code health): one path is known to contain real findings
-# and must fail the severity gate, one is known to be clean and must pass
-# it, and one installs the pip package (pyproject.toml) fresh and checks
-# the installed console scripts behave the same as running the scripts
+# this repo's code health): one path is known to contain real Anthropic-
+# rule findings and must fail the severity gate, one specifically checks
+# the OpenAI rules by name (not just "some rule fired" — see that job's
+# comment for why), one path is known to be clean and must pass the gate,
+# and one installs the pip package (pyproject.toml) fresh and checks the
+# installed console scripts behave the same as running the scripts
 # directly. If any assumption stops holding, that's a regression to fix,
 # not a real finding to triage.
 
@@ -33,6 +35,32 @@ jobs:
             exit 1
           fi
           echo "OK: gate correctly failed (${{ steps.scan.outputs.findings-count }} finding(s))."
+
+  expect-openai-rules-fire-on-openai-fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run claude-api-guard against example_project/openai_bot.py (known OpenAI-rule findings)
+        id: scan
+        continue-on-error: true
+        uses: ./
+        with:
+          path: example_project/openai_bot.py
+          fail-on: HIGH
+      - name: Assert the severity gate failed AND both known OpenAI rules actually fired
+        run: |
+          if [ "${{ steps.scan.outcome }}" != "failure" ]; then
+            echo "::error::Expected the HIGH-severity gate to fail against example_project/openai_bot.py (it has known HIGH findings), but the step outcome was '${{ steps.scan.outcome }}'."
+            exit 1
+          fi
+          json_path="${{ steps.scan.outputs.findings-json }}"
+          for rule_id in openai-httpx-to-httpx2 openai-v1-legacy-module-level-calls-removed; do
+            if ! grep -q "\"$rule_id\"" "$json_path"; then
+              echo "::error::Expected rule_id '$rule_id' in $json_path but it wasn't there. A generic assertion (findings-count > 0, checked in the other job) can't catch this: if this exact rule silently stopped firing but some OTHER rule in the merged RULES list still matched something in this file, the gate would still fail and this regression would go unnoticed. That's specifically why this job greps for each expected rule_id by name instead of just checking the gate failed."
+              exit 1
+            fi
+          done
+          echo "OK: gate correctly failed, and both openai-httpx-to-httpx2 and openai-v1-legacy-module-level-calls-removed fired as expected."
 
   expect-clean-on-known-clean-fixture:
     runs-on: ubuntu-latest

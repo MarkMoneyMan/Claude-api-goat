@@ -493,18 +493,35 @@ Also tested against `openai-cookbook` (OpenAI's own official examples,
 224 real `.py` files — 0 findings throughout, a clean smoke test on
 actively-maintained modern code).
 
+**Update: OpenAI is now wired into rule sync and self-check too, closing
+the loop the same way it's closed for Anthropic.** `sync_rules.py` is
+multi-provider now (`--provider anthropic|openai`; see "Rule sync"
+below for exactly how the two providers' changelogs are parsed
+differently), `update-rules.yml` runs it for both every week and opens
+one combined PR, and `self-check.yml` has a dedicated job that greps for
+`openai-httpx-to-httpx2` and `openai-v1-legacy-module-level-calls-removed`
+by name (not just "the severity gate failed") so a silent regression in
+one specific OpenAI rule can't hide behind some other rule still firing.
+`pipeline_runs/last_synced.json` is now `{"anthropic": {...}, "openai":
+{...}}` (migrated automatically from the old flat one-provider shape,
+tested against a simulated old file, not just assumed).
+
 **What's explicitly not done yet, stated plainly:** the string-literal
 false-positive class found in bug #4 is a real gap in `generic_scan()`
 itself, not just this one rule — it hasn't been audited across the other
 21 rules to see whether any of them are exposed to it too (none have
 shown it in the repos tested so far, but "not yet observed" isn't the
-same as "doesn't happen"). `sync_rules.py`/`update-rules.yml` (the
-automated changelog sync) and the CI Action's own self-check fixtures
-haven't been updated to
-know about a second provider yet — this is Python-detection-only so far,
-hand-seeded, not yet self-maintaining for OpenAI the way it now is for
-Anthropic. Also untested: JS/TS support for OpenAI (`js_scanner/` only
-knows the Anthropic rule set right now).
+same as "doesn't happen"). JS/TS support for OpenAI is still untested —
+`js_scanner/` only knows the Anthropic rule set right now — and the
+OpenAI side of rule sync hasn't been proven against a real *new*
+breaking change yet (unlike Anthropic's, which was — see "Rule sync"
+below): it's only been run in dry-run mode against real history, since
+there's no small, cheap way to roll OpenAI's `last_synced_date` back
+without re-processing content already reviewed by hand. It'll get its
+real end-to-end test whenever openai-python next ships a version with an
+actual `⚠ BREAKING CHANGES` section and the Monday schedule (or a manual
+run) picks it up — same "this part waits for something real to happen"
+honesty already applied to Anthropic's own first automated run.
 
 ## Rule sync
 
@@ -529,13 +546,36 @@ instead of "a scanner someone has to remember to update by hand." It:
    date regardless of whether anything new was found, so a week with only
    additive (non-breaking) changes doesn't get re-processed forever.
 
-`.github/workflows/update-rules.yml` runs it weekly (Mondays) and on
-`workflow_dispatch`, then hands off to `peter-evans/create-pull-request`
-— same no-commit-if-nothing-changed pattern as `autofix-weekly.yml`, on
+**Multi-provider since the OpenAI work above** — this whole pipeline runs
+once per provider (`python3 sync_rules.py --provider anthropic|openai`),
+each with its own entry in a `PROVIDERS` dict: its own changelog URL, its
+own rules file (`rules.py` / `rules_openai.py`), and — this is the part
+that couldn't be shared code — its own section parser. Anthropic's
+release notes and openai-python's `CHANGELOG.md` aren't just different
+URLs, they're structurally different documents: Anthropic's is
+unstructured prose with no reliable breaking/non-breaking signal beyond
+what the model infers, so every new dated section has to go to it.
+openai-python's `CHANGELOG.md` explicitly marks breaking versions with a
+"`### ⚠ BREAKING CHANGES`" heading (confirmed against the real file: 344
+version headers total, ever, only 2 ever marked breaking) — so its parser
+filters to *only* those sections before anything reaches the model,
+rather than spending tokens sending it 342 irrelevant Features/Bug
+Fixes/Chores sections to correctly say "nothing breaking here" over and
+over. `pipeline_runs/last_synced.json` is one file holding one entry per
+provider now instead of a single flat date; an old flat-shaped file (from
+before a second provider existed) is migrated to the new shape
+automatically the first time it's read.
+
+`.github/workflows/update-rules.yml` runs both providers weekly (Mondays)
+and on `workflow_dispatch`, then hands off once to
+`peter-evans/create-pull-request` for whatever changed across either —
+same no-commit-if-nothing-changed pattern as `autofix-weekly.yml`, on
 a fixed branch name so a run before last week's PR merges updates that
 PR instead of opening a duplicate. Needs a repo secret,
 `ANTHROPIC_API_KEY` — the workflow fails loudly rather than silently
-skipping if it's missing. Also needs the repo's "Allow GitHub Actions to
+skipping if it's missing (no OpenAI API key is needed anywhere in this:
+the OpenAI side only ever reads OpenAI's public changelog page, it never
+calls OpenAI's own API). Also needs the repo's "Allow GitHub Actions to
 create and approve pull requests" setting enabled (Settings → Actions →
 General → Workflow permissions) — without it, `create-pull-request`
 fails even with `pull-requests: write` declared in the workflow itself
