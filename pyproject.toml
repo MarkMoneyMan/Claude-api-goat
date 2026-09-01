@@ -27,5 +27,16 @@ claude-api-guard-autofix = "autofix:main"
 # from this private git repo (see README's "Packaging" section) — not a
 # shared environment — but a real `claude_api_guard/` package layout
 # would be the right fix before this goes any wider than that.
+#
+# rules_openai.py added here the moment ast_scan.py started importing it
+# (`from rules_openai import RULES_OPENAI`) — real bug, not caught by any
+# local test: every local check ran ast_scan.py straight from this
+# checkout (sys.path already has the repo root), so `from rules_openai
+# import ...` resolved fine every time regardless of what pyproject.toml
+# listed. Only the installed console script (`pip install .` in a fresh
+# environment, exactly what package-installs-and-runs in self-check.yml
+# does) actually depends on this list being complete — and that's exactly
+# the job that broke on the real Actions run, 3 times in a row, before
+# this got noticed and fixed.
 [tool.setuptools]
-py-modules = ["rules", "ast_scan", "autofix"]
+py-modules = ["rules", "rules_openai", "ast_scan", "autofix"]

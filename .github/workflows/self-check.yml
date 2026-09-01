@@ -92,14 +92,34 @@ jobs:
       - name: Run the installed claude-api-guard-scan against example_project/
         id: scan
         continue-on-error: true
-        run: claude-api-guard-scan example_project/
-      - name: Assert it found the known HIGH findings (nonzero exit)
+        run: claude-api-guard-scan example_project/ --json installed_scan_findings.json
+      - name: Assert it found the known HIGH findings from BOTH providers (nonzero exit, not a crash)
         run: |
+          # Real bug, found on a real Actions run (not hypothetical): this
+          # assertion used to check only `outcome == "failure"`, and a
+          # ModuleNotFoundError (rules_openai missing from the installed
+          # package — see pyproject.toml's history) ALSO exits non-zero,
+          # so that crash silently passed this exact check while genuinely
+          # meaning something completely different from "found the known
+          # findings." Now checks that a real findings-json file exists
+          # and contains specific rule_ids from BOTH rules files — proof
+          # the installed package's full merged RULES list actually
+          # loaded, not just proof *some* command somewhere exited 1.
           if [ "${{ steps.scan.outcome }}" != "failure" ]; then
             echo "::error::Expected the installed claude-api-guard-scan to exit non-zero against example_project/ (it has known findings), but the step outcome was '${{ steps.scan.outcome }}'."
             exit 1
           fi
-          echo "OK: installed console script found and reported the known findings."
+          if [ ! -s installed_scan_findings.json ]; then
+            echo "::error::Expected installed_scan_findings.json to exist and be non-empty — the scan step exited non-zero, but if that's a crash (e.g. an import error) rather than real findings, no JSON file gets written at all."
+            exit 1
+          fi
+          for rule_id in sdk-v1-sampling-params-removed openai-httpx-to-httpx2; do
+            if ! grep -q "\"$rule_id\"" installed_scan_findings.json; then
+              echo "::error::Expected rule_id '$rule_id' in installed_scan_findings.json but it wasn't there — the installed package's merged RULES list (rules.py + rules_openai.py) may not have loaded correctly."
+              exit 1
+            fi
+          done
+          echo "OK: installed console script found and reported the known findings from both providers."
       - name: Assert the installed claude-api-guard-autofix produces a working patch
         run: |
           cp example_project/autofix_test.py /tmp/autofix_smoke_test.py
