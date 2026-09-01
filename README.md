@@ -1,8 +1,94 @@
-# claude-api-guard (prototype)
+# claude-api-guard
 
-A proof-of-concept "self-maintaining API" tool: scans a codebase for usage
-of the Claude/Anthropic API and flags code that's broken (or about to
-break) because of a known, dated API change.
+A GitHub Action that scans your codebase for usage of the Claude/Anthropic
+and OpenAI APIs that's broken, or about to break, because of a known, dated
+API change — and auto-fixes the mechanical ones. It keeps its own rule set
+current by reading each provider's official release notes on a schedule and
+extracting new breaking changes with an LLM, so it doesn't go stale the way
+a hand-maintained list would.
+
+## Why this exists
+
+LLM provider SDKs change fast, and "it worked last month" is not the same
+as "it still works." A sampling parameter gets removed, an HTTP client gets
+swapped, a response shape gets renamed — and the first anyone hears about
+it is a production error, not a changelog. This tool is meant to be the
+thing that catches that in CI, before it ships.
+
+**Where it's strongest right now, and where it's headed:** claude-api-guard
+started as, and is still deepest on, Anthropic's Claude API — every rule is
+validated against real downstream code (not just written and assumed
+correct; see the engineering log below for the actual false positives found
+and fixed), and its rule set updates itself from Anthropic's live release
+notes. OpenAI support followed the same bar: hand-extracted from OpenAI's
+own changelog and migration guides, then fully triaged against a large real
+codebase (litellm) until every finding checked out. The plan from here is
+to keep expanding provider coverage outward from that same foundation —
+this is meant to grow into a broader "breaking-change guard for every API
+your project depends on" tool, not stay a single-provider niche script. The
+`"provider"` field already built into every rule, and the per-provider
+`PROVIDERS` config in `sync_rules.py`, exist specifically so adding the
+next provider is a matter of writing its rules and its changelog parser,
+not restructuring the tool.
+
+**No API key needed to use it.** Scanning your code costs nothing and calls
+no LLM at runtime — every rule ships pre-baked in this repo. An Anthropic
+API key is only used on *this* repo's own maintenance side, to power the
+weekly job that reads provider release notes and proposes new rules (every
+proposed rule still goes through a human-reviewed PR before it's live — see
+"Rule sync" below).
+
+## Quick start
+
+Add this to a workflow file in the repo you want to protect (e.g.
+`.github/workflows/claude-api-guard.yml`):
+
+```yaml
+name: claude-api-guard check
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: MarkMoneyMan/Claude-api-goat@master
+        with:
+          path: .
+          fail-on: HIGH        # MEDIUM/LOW findings are reported but won't fail the job
+          # scan-js: "true"    # also scan JS/TS files for Anthropic SDK usage
+```
+
+That's it — no secrets, no config file, no signup. It fails the job only on
+HIGH-severity findings by default, so a heads-up doesn't block a merge the
+way a real break should. See `examples/consumer-workflows/` for a weekly
+auto-fix variant that opens a PR for the mechanical fixes on its own.
+
+Covers Python (Anthropic + OpenAI SDKs) and, as a first pass, JS/TS
+(Anthropic SDK only so far) — see "Known limitations" below for exactly
+what is and isn't covered yet.
+
+## License
+
+Business Source License 1.1 (see `LICENSE`) — free to read, run, self-host,
+modify, and build on for your own use, including commercial use. The one
+thing it reserves is standing up claude-api-guard itself as a competing
+paid hosted service before 2030-09-01, at which point it converts
+automatically to the MIT License. This is not a restriction on *using* the
+tool to protect your own project — that's unrestricted from day one.
+
+---
+
+## Engineering log
+
+Everything below is the detailed, dated record of how this was actually
+built and validated — real bugs found, real repos tested against, real CI
+runs, kept as running documentation rather than cleaned up after the fact.
+It's here for anyone who wants to verify the claims above rather than take
+them on faith.
 
 ## Two versions in this repo
 

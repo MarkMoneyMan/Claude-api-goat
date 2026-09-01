@@ -8,6 +8,11 @@ version = "0.1.0"
 description = "Detect and auto-fix Claude/Anthropic API breaking changes in Python code."
 readme = "README.md"
 requires-python = ">=3.9"
+# Business Source License 1.1, not a standard OSI-approved license, so
+# pointed at the LICENSE file directly rather than an SPDX identifier.
+# Free to use/self-host/modify, including commercially; converts to MIT
+# on 2030-09-01. See LICENSE and README's "License" section.
+license = { file = "LICENSE" }
 
 [project.scripts]
 claude-api-guard-scan = "ast_scan:main"
