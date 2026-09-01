@@ -42,7 +42,24 @@ RULES_OPENAI = [
     {
         "id": "openai-httpx-to-httpx2",
         "provider": "openai",
-        "pattern": r"import\s+httpx(?!2)|from\s+httpx(?!2)\s+import|httpx\.(Client|AsyncClient|Timeout|MockTransport)",
+        # Deliberately does NOT match a bare "import httpx"/"from httpx
+        # import ..." on its own — unlike this rule's Anthropic sibling
+        # (python-sdk-v1-httpx-to-httpx2), which does and got away with
+        # it because litellm barely references anthropic at all, so it
+        # was never stress-tested there. Real bug, found triaging every
+        # one of litellm's ~140 OpenAI-rule hits file by file (not just
+        # spot-checking): 43 of 60 flagged files had NO real httpx.Client/
+        # AsyncClient/Timeout/MockTransport construction anywhere — the
+        # only match was the import line itself. litellm/exceptions.py
+        # was typical: it uses httpx.Response/httpx.Request extensively
+        # (types this rule was never about), and "import httpx" was the
+        # sole hit. A bare import isn't actionable on its own — nothing
+        # for a developer to go change at that specific line — so it's
+        # noise at the per-finding granularity even though the module
+        # genuinely does import httpx. Narrowed to the actual construction
+        # sites, the same "under-report over noise" call made everywhere
+        # else in this project a pattern turned out too permissive.
+        "pattern": r"httpx\.(Client|AsyncClient|Timeout|MockTransport)",
         "applies_if_model": None,
         "severity": "HIGH",
         "deadline": "already active",
@@ -100,7 +117,25 @@ RULES_OPENAI = [
     {
         "id": "openai-v1-legacy-module-level-calls-removed",
         "provider": "openai",
-        "pattern": r"openai\.(ChatCompletion|Completion|Embedding|Image|FineTune|File)\.(create|acreate|download)|openai\.api_key\s*=|openai\.api_base\s*=",
+        # The (?<!['"]) / (?!['"]) guards matter: found triaging litellm's
+        # 8 hits for this rule file by file, not a hypothetical. litellm's
+        # PromptLayer integration does `litellm.module_level_client.post(
+        # ..., json={"function_name": "openai.ChatCompletion.create", ...})`
+        # — a real Call node whose unparsed text includes a STRING LITERAL
+        # that merely names the old call shape as logging metadata, sent
+        # to PromptLayer's API. Nothing here is actually calling
+        # openai.ChatCompletion.create; the pattern matched inside the
+        # string value because generic_scan() regexes a whole node's
+        # unparsed text (real code and any string literals it contains
+        # alike) rather than only real identifier-access syntax. General
+        # problem for the whole engine (a rule's trigger text could always
+        # coincidentally appear inside some unrelated string), not
+        # something to fully solve here — but for this rule specifically,
+        # every real hit is a genuine attribute access, never inside
+        # quotes, so excluding an immediately-adjacent quote character is
+        # a safe, narrow, low-risk fix that doesn't touch generic_scan()
+        # itself or risk any other already-validated rule.
+        "pattern": r"(?<!['\"])openai\.(ChatCompletion|Completion|Embedding|Image|FineTune|File)\.(create|acreate|download)(?!['\"])|(?<!['\"])openai\.api_key\s*=|(?<!['\"])openai\.api_base\s*=",
         "applies_if_model": None,
         "severity": "HIGH",
         "deadline": "already active (Python SDK v1.0.0, 2023)",

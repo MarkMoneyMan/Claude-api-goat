@@ -441,20 +441,66 @@ this project so far:**
    naming these types is missed) over noise — same trade-off this project
    has made every other time a pattern was too permissive.
 
-**Net result**, tested against `openai-cookbook` (OpenAI's own official
-examples, 224 real `.py` files — 0 findings, a clean smoke test on
-actively-maintained modern code) and `litellm` (a large real downstream
-consumer that also genuinely imports and constructs OpenAI clients, unlike
-its Anthropic integration which never touches the real `anthropic`
-package): 195 → 140 OpenAI-rule findings across the two fixes above.
-**What's explicitly not done yet, stated plainly:** only spot-checked a
-sample of the remaining 140 for correctness, not all of them (litellm's
-own `litellm/llms/openai/openai.py` and `assistants/main.py` do
-legitimately construct OpenAI clients with custom httpx types — real
-hits, confirmed by reading the code — but the full 140 hasn't been
-triaged file-by-file the way the Anthropic rule set eventually was across
-6 repos). `sync_rules.py`/`update-rules.yml` (the automated changelog
-sync) and the CI Action's own self-check fixtures haven't been updated to
+**Update: fully triaged, not just spot-checked — every one of the 140
+findings above was reviewed, not a sample.** That triage found three more
+real, structural bugs, same "test for real" pattern as everything else in
+this project:
+
+3. 63 of the 129 `openai-httpx-to-httpx2` hits were a bare `import httpx`
+   or `from httpx import ...` line, with no actual `httpx.Client`/
+   `Timeout`/`MockTransport` construction anywhere else in that file —
+   43 files had *only* that. `litellm/exceptions.py` was typical: it uses
+   `httpx.Response`/`httpx.Request` extensively (types this rule was
+   never about), and the import line was the sole match. A bare import
+   isn't actionable on its own — nothing for a developer to go change at
+   that specific line — so this rule's Anthropic sibling
+   (`python-sdk-v1-httpx-to-httpx2`) got away with matching bare imports
+   too only because litellm barely references `anthropic` at all and was
+   never stress-tested there. Fixed by dropping the bare-import
+   alternative from the pattern entirely, keeping only the actual
+   construction/type sites.
+4. One of the 8 `openai-v1-legacy-module-level-calls-removed` hits wasn't
+   real code at all: litellm's PromptLayer integration does
+   `litellm.module_level_client.post(..., json={"function_name":
+   "openai.ChatCompletion.create", ...})` — a real `Call` node whose
+   unparsed text includes a **string literal** that merely names the old
+   call shape as logging metadata sent to PromptLayer's API. Nothing
+   there is actually calling `openai.ChatCompletion.create`; the pattern
+   matched inside a string value because `generic_scan()` regexes a
+   node's whole unparsed text, code and any string literals it contains
+   alike — a structural gap in the generic engine itself, not just this
+   rule (any rule's trigger text could coincidentally appear inside some
+   unrelated string; this is the first time it's actually been observed,
+   not something audited across every other rule). Given every real hit
+   for this specific rule is a genuine attribute access that's never
+   inside quotes, fixed narrowly with a quote-adjacency guard on this
+   rule's pattern (`(?<!['"])...(?!['"])`) rather than touching
+   `generic_scan()` itself — safer, and doesn't risk any already-shipped
+   rule that hasn't shown this problem.
+
+After all three fixes: **195 → 59 OpenAI-rule findings in litellm, every
+one reviewed and legitimate** — real `httpx.Client`/`Timeout`/
+`MockTransport` construction or type-check sites (mostly in litellm's
+actual OpenAI/Azure provider code and its HTTP-mocking test fixtures),
+real leftover legacy `openai.api_key =`/`openai.ChatCompletion.create(...)`
+calls (an old cookbook example and a few of litellm's own older test
+setup lines), and the 3 real references to the renamed tool-call-output
+types. Re-confirmed clean afterward: `openai-cookbook` still 0 findings,
+`ci_fixtures/known_clean.py` still 0, `example_project/`'s own fixtures
+unaffected.
+
+Also tested against `openai-cookbook` (OpenAI's own official examples,
+224 real `.py` files — 0 findings throughout, a clean smoke test on
+actively-maintained modern code).
+
+**What's explicitly not done yet, stated plainly:** the string-literal
+false-positive class found in bug #4 is a real gap in `generic_scan()`
+itself, not just this one rule — it hasn't been audited across the other
+21 rules to see whether any of them are exposed to it too (none have
+shown it in the repos tested so far, but "not yet observed" isn't the
+same as "doesn't happen"). `sync_rules.py`/`update-rules.yml` (the
+automated changelog sync) and the CI Action's own self-check fixtures
+haven't been updated to
 know about a second provider yet — this is Python-detection-only so far,
 hand-seeded, not yet self-maintaining for OpenAI the way it now is for
 Anthropic. Also untested: JS/TS support for OpenAI (`js_scanner/` only
